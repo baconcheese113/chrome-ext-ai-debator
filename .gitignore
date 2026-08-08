@@ -1,6 +1,7 @@
 node_modules/
 .output/
 .wxt/
+.svelte-check/
 *.log
 spike-results.json
 .playwright-mcp/
