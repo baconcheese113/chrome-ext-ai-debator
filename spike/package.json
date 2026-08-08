@@ -1,0 +1,15 @@
+{
+  "name": "ai-debator-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.5",
+    "typescript": "^7.0.2",
+    "wxt": "^0.21.3"
+  }
+}

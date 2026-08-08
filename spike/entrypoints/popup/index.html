@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AI Debator Spike</title>
+    <style>
+      body {
+        font: 13px/1.45 ui-sans-serif, system-ui, sans-serif;
+        margin: 0;
+        padding: 12px;
+        width: 460px;
+        background: #14151a;
+        color: #e6e6e9;
+      }
+      h1 { font-size: 14px; margin: 0 0 2px; }
+      .sub { color: #8b8d98; margin: 0 0 12px; font-size: 12px; }
+      fieldset { border: 1px solid #2c2e37; border-radius: 6px; margin: 0 0 10px; padding: 8px 10px; }
+      legend { color: #8b8d98; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+      label { display: inline-flex; gap: 5px; align-items: center; margin-right: 12px; }
+      button {
+        background: #3b5bdb; color: #fff; border: 0; border-radius: 5px;
+        padding: 7px 12px; font: inherit; cursor: pointer;
+      }
+      button.secondary { background: #2c2e37; }
+      button:disabled { opacity: .45; cursor: default; }
+      .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+      progress { width: 100%; height: 6px; }
+      #status { color: #8b8d98; font-size: 12px; min-height: 16px; }
+      textarea {
+        width: 100%; height: 170px; box-sizing: border-box; background: #0e0f13;
+        color: #b9c8e6; border: 1px solid #2c2e37; border-radius: 5px; padding: 8px;
+        font: 11px/1.4 ui-monospace, monospace; resize: vertical;
+      }
+      .warn { color: #e8a838; font-size: 12px; margin: 0 0 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>AI Debator — Adapter Spike</h1>
+    <p class="sub">Throwaway. Produces findings, not a product.</p>
+
+    <p class="warn">
+      Log into each provider first. The suite opens and closes windows on its own — leave it be
+      while it runs. You can close this popup; the run continues.
+    </p>
+
+    <fieldset>
+      <legend>Providers</legend>
+      <div id="providers"></div>
+    </fieldset>
+
+    <div class="row">
+      <button id="start">Run full suite</button>
+      <button id="diagnose" class="secondary">Diagnose active tab</button>
+      <button id="reset" class="secondary">Reset</button>
+    </div>
+
+    <progress id="bar" value="0" max="1"></progress>
+    <p id="status">Idle.</p>
+
+    <div class="row">
+      <button id="copy" class="secondary">Copy JSON</button>
+      <button id="download" class="secondary">Download JSON</button>
+    </div>
+    <textarea id="out" readonly placeholder="Results appear here."></textarea>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
