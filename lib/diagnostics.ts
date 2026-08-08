@@ -16,8 +16,32 @@ export function collectDiagnostics(note: string): Diagnostics {
     candidateComposers: composerCandidates(),
     candidateButtons: buttonCandidates(),
     candidateResponseContainers: responseCandidates(),
+    conversationHtml: captureConversationHtml(),
     note,
   };
+}
+
+/** Cap on captured markup. Enough to rebuild selectors from; small enough to paste. */
+const HTML_BUDGET = 120_000;
+
+/**
+ * Markup of the region that holds the conversation, so a broken provider page can become a
+ * permanent test fixture instead of a one-off debugging session. Without this, fixing an
+ * adapter costs a round-trip through the user every time a provider redesigns.
+ *
+ * Attribute values are kept, but text content is not scrubbed — the caller is pasting their
+ * own conversation, and they should know that.
+ */
+function captureConversationHtml(): string | undefined {
+  const root =
+    document.querySelector('main') ??
+    document.querySelector('[role="main"]') ??
+    document.body;
+  if (!root) return undefined;
+  const html = (root as HTMLElement).outerHTML ?? '';
+  return html.length > HTML_BUDGET
+    ? `${html.slice(0, HTML_BUDGET)}\n<!-- truncated at ${HTML_BUDGET} chars -->`
+    : html;
 }
 
 function composerCandidates(): ElementSketch[] {

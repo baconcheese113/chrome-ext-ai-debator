@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Only the deterministic layers run here. The live smoke test (tests/live) drives real
+# provider accounts and must never run in CI — it has its own config for exactly that reason.
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Unit, orchestrator and build-integrity tests
+        run: npm test
+
+      - name: Install Chromium
+        # Extensions need full Chrome, not the headless shell.
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: Driver and end-to-end tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

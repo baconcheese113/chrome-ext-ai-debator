@@ -217,6 +217,11 @@ export interface Diagnostics {
   candidateComposers: ElementSketch[];
   candidateButtons: ElementSketch[];
   candidateResponseContainers: ElementSketch[];
+  /**
+   * Markup of the conversation region, so a broken page can be replayed as a test fixture.
+   * Contains the user's own conversation text — it goes to the clipboard, never off-device.
+   */
+  conversationHtml?: string;
   note: string;
 }
 

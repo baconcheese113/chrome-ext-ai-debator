@@ -97,3 +97,37 @@ npm run dev     # HMR, separate Chrome profile (you'll need to log in again ther
 npm run check   # tsc + svelte-check
 npm run build
 ```
+
+## Tests
+
+```bash
+npm test          # unit + orchestrator + build integrity   (~15s, no browser)
+npm run test:e2e  # driver + end-to-end in Chromium         (~2min, no accounts)
+npm run test:all  # everything above, plus typecheck
+```
+
+Neither needs a provider account. The suite runs against a **mock provider** that reproduces,
+on demand, every failure a real provider has actually inflicted on this project: replying
+into an artifact instead of the thread, leaving an empty trailing message node, truncating
+mid-stream, omitting the stop button, echoing the prompt back, going silent, and pausing long
+enough mid-stream to fool a naive completion detector.
+
+| Layer | What it proves | Where |
+|---|---|---|
+| Unit | Convergence, prompt and narrator parsing | [tests/unit/](tests/unit/) |
+| Orchestrator | The round loop against a fake `chrome` | [tests/orchestrator/](tests/orchestrator/) |
+| Driver | Real driver, real Chromium, real layout | [tests/driver/](tests/driver/) |
+| End-to-end | The actual extension driving the actual dashboard | [tests/e2e/](tests/e2e/) |
+| Build | The bundle is fresh and ships no localhost permission | [tests/build.spec.ts](tests/build.spec.ts) |
+
+**What none of them prove: that a real provider's selectors still work.** Only the live smoke
+test can tell you that, and it needs your own logged-in sessions:
+
+```bash
+npm run test:live:login   # one-time: log in, in a dedicated profile
+npm run test:live         # one short prompt per provider
+```
+
+It uses real subscription quota, is expected to be occasionally flaky, and never runs in CI.
+When it fails it prints the page's actual candidate selectors, so the adapter gets repaired
+from evidence rather than a guess.
