@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mock Provider</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
+      main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      #thread { flex: 1; overflow: auto; padding: 16px; }
+      .msg { margin-bottom: 16px; max-width: 70ch; }
+      .user { color: #333; }
+      .assistant { color: #111; }
+      /* A deliberately separate panel, mirroring Claude Cowork / ChatGPT canvas. */
+      #artifact { width: 40%; border-left: 1px solid #ccc; padding: 16px; overflow: auto; display: none; }
+      #artifact.open { display: block; }
+      footer { border-top: 1px solid #ccc; padding: 12px; display: flex; gap: 8px; }
+      #composer { flex: 1; min-height: 44px; border: 1px solid #bbb; border-radius: 6px; padding: 10px; }
+      button { padding: 10px 16px; }
+      /* Hidden rather than removed, so `isVisible` is genuinely exercised. */
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div id="thread"></div>
+      <footer>
+        <div id="composer" contenteditable="true" role="textbox" aria-label="Message"></div>
+        <button id="send" data-testid="send-button" aria-label="Send message">Send</button>
+        <button id="stop" data-testid="stop-button" aria-label="Stop response" hidden>Stop</button>
+      </footer>
+    </main>
+    <div id="artifact" aria-label="Preview"><div class="artifact-body"></div></div>
+    <script type="module" src="./mock.js"></script>
+  </body>
+</html>

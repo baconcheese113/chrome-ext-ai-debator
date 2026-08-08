@@ -20,8 +20,15 @@ const QUIESCENCE_MS = 1800;
 const QUIESCENCE_CONFIRM = 3;
 /** Once a stop button has appeared and then gone, this much quiet is enough. */
 const STOP_GONE_CONFIRM_MS = 900;
-const NEW_MESSAGE_TIMEOUT_MS = 45_000;
-const DETECT_TIMEOUT_MS = 300_000;
+
+/**
+ * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
+ * the no-reply timeout; at the production value they alone cost 90 seconds.
+ */
+export const driverTimings = {
+  newMessageTimeoutMs: 45_000,
+  detectTimeoutMs: 300_000,
+};
 
 class DriveError extends Error {
   constructor(readonly failure: DriveFailure, readonly detail: string) {
@@ -65,7 +72,7 @@ export async function drive(
     p = performance.now();
     const appeared = await waitFor(
       () => (countMessages(adapter).count > before.count ? true : undefined),
-      NEW_MESSAGE_TIMEOUT_MS,
+      driverTimings.newMessageTimeoutMs,
     );
     if (!appeared) {
       // "Count stayed at 0" has two very different causes, and conflating them sends you
@@ -126,18 +133,32 @@ function raise(failure: DriveFailure, detail: string): never {
 function validate(extraction: TurnExtraction, req: DriveRequest): void {
   const text = extraction.text.trim();
 
+  // Echo is checked BEFORE length. An echoed prompt is usually also too short, and
+  // "it handed back your own prompt" tells you what to do; "too short" sends you hunting
+  // for a rate limit.
+  //
+  // Gemini under throttling returned "You said / <our prompt>". If what we captured is our
+  // own prompt plus trimming, we grabbed the user's turn rather than the reply.
+  //
+  // Measured by what REMAINS after removing the prompt, not by a length ratio. A ratio
+  // breaks the moment anything is appended (a CONVERGED footer was enough), and it also
+  // misfires in later rounds where the prompt legitimately dwarfs the reply.
+  const full = req.prompt.trim();
+  const probe = full.slice(0, 80);
+  const residue = (s: string) => text.split(s).join('').replace(/\s+/g, ' ').trim().length;
+
+  if (full.length > 30 && text.includes(full) && residue(full) < 200) {
+    raise('prompt-echo', 'extracted text is our prompt reproduced in full');
+  }
+  if (probe.length > 30 && text.includes(probe) && residue(probe) < 150) {
+    raise('prompt-echo', 'extracted text is our own prompt with little else');
+  }
+
   if (text.length < req.minChars) {
     raise(
       'implausible-response',
       `only ${text.length} chars, expected at least ${req.minChars} — likely truncated`,
     );
-  }
-
-  // Gemini under throttling returned "You said / <our prompt>". If most of what we got back
-  // is our own prompt, we captured the user turn, not the reply.
-  const probe = req.prompt.slice(0, 80).trim();
-  if (probe.length > 30 && text.includes(probe) && text.length < req.prompt.length * 1.4) {
-    raise('prompt-echo', 'extracted text is mostly our own prompt echoed back');
   }
 }
 
@@ -232,7 +253,7 @@ function submit(composer: HTMLElement, adapter: ProviderAdapter): boolean {
  * timer, which is what made Gemini take far longer to register than it actually needed.
  */
 async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
-  const deadline = performance.now() + DETECT_TIMEOUT_MS;
+  const deadline = performance.now() + driverTimings.detectTimeoutMs;
   let lastMutation = performance.now();
 
   const observer = new MutationObserver(() => {
@@ -268,7 +289,7 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
         return;
       }
     }
-    raise('detect-timeout', `no quiet period within ${DETECT_TIMEOUT_MS}ms`);
+    raise('detect-timeout', `no quiet period within ${driverTimings.detectTimeoutMs}ms`);
   } finally {
     observer.disconnect();
   }

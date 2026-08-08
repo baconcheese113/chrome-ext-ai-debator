@@ -1,5 +1,8 @@
 import { defineConfig } from 'wxt';
 
+/** E2E builds additionally drive the local mock provider. See lib/adapters/mock.ts. */
+const E2E = process.env.WXT_E2E === 'true';
+
 export default defineConfig({
   modules: ['@wxt-dev/module-svelte'],
   manifest: {
@@ -17,6 +20,7 @@ export default defineConfig({
       'https://kimi.com/*',
       'https://www.kimi.com/*',
       'https://chat.deepseek.com/*',
+      ...(E2E ? ['http://localhost/*', 'http://127.0.0.1/*'] : []),
     ],
     action: { default_title: 'AI Debator' },
   },

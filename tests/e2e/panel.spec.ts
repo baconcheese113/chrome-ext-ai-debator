@@ -1,0 +1,131 @@
+import { expect, openMockTab, seatTab, test } from './fixtures';
+
+/**
+ * L4 — the whole machine: dashboard UI → background → orchestrator → content script → page.
+ *
+ * Every seat here is a local mock provider, so these tests are deterministic and need no
+ * accounts. They prove the machine works; they cannot prove a real provider's selectors are
+ * still valid. That is L5's job, and only L5's.
+ */
+
+const TOPIC = 'How should a solo developer price a compute-heavy SaaS?';
+
+test.describe.configure({ mode: 'serial' });
+
+test('runs a full panel to convergence', async ({ context, dashboard }) => {
+  await openMockTab(context, 'mode=normal&words=90&speed=3&converge=yes');
+  await openMockTab(context, 'mode=normal&words=90&speed=3&converge=yes');
+
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+
+  const rows = dashboard.locator('li').filter({ hasText: 'MOCK' });
+  await expect(rows).toHaveCount(2);
+
+  await rows.nth(0).locator('input.name').fill('Alpha');
+  await rows.nth(0).locator('select').selectOption('participant');
+  await rows.nth(1).locator('input.name').fill('Beta');
+  await rows.nth(1).locator('select').selectOption('participant');
+
+  await dashboard.locator('#topic').fill(TOPIC);
+  await dashboard.locator('#conv').selectOption('self-report');
+  await dashboard.getByRole('button', { name: 'Start panel' }).click();
+
+  // Both mocks report CONVERGED: yes, so the panel should stop after one round.
+  await expect(dashboard.locator('.chip.done')).toBeVisible({ timeout: 90_000 });
+  // Scoped to the heading: the activity log also contains the text "Round 1".
+  await expect(dashboard.getByRole('heading', { name: 'Round 1' })).toBeVisible();
+  await expect(dashboard.locator('.turn')).toHaveCount(2);
+  await expect(dashboard.locator('.turn').first()).toContainText('Alpha');
+  await expect(dashboard.getByText('settled').first()).toBeVisible();
+});
+
+test('narrator summary is parsed and rendered', async ({ context, dashboard }) => {
+  await openMockTab(context, 'mode=normal&words=60&speed=3&converge=yes');
+  await openMockTab(context, 'mode=normal&words=60&speed=3&converge=yes');
+  // The narrator mock replies with prose, not JSON, so this also proves a narrator that
+  // ignores the contract degrades visibly instead of crashing the run.
+  await openMockTab(context, 'mode=normal&words=60&speed=3');
+
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+  const rows = dashboard.locator('li').filter({ hasText: 'MOCK' });
+  await expect(rows).toHaveCount(3);
+
+  await rows.nth(0).locator('select').selectOption('participant');
+  await rows.nth(1).locator('select').selectOption('participant');
+  await rows.nth(2).locator('input.name').fill('Narrator');
+  await rows.nth(2).locator('select').selectOption('narrator');
+
+  await dashboard.locator('#topic').fill(TOPIC);
+  await dashboard.getByRole('button', { name: 'Start panel' }).click();
+
+  await expect(dashboard.locator('.chip.done')).toBeVisible({ timeout: 120_000 });
+  await expect(dashboard.getByText("didn't return usable JSON")).toBeVisible();
+});
+
+test('a failing model raises an incident that can be recovered from', async ({ context, dashboard }) => {
+  await openMockTab(context, 'mode=normal&words=90&speed=3&converge=yes');
+  await openMockTab(context, 'mode=normal&words=90&speed=3&converge=yes');
+  // Truncates mid-stream — the silent-corruption case, which must surface as a failure.
+  await openMockTab(context, 'mode=truncate&words=900&speed=1');
+
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+  const rows = dashboard.locator('li').filter({ hasText: 'MOCK' });
+  await expect(rows).toHaveCount(3);
+  for (let i = 0; i < 3; i++) await rows.nth(i).locator('select').selectOption('participant');
+  await rows.nth(2).locator('input.name').fill('Flaky');
+
+  await dashboard.locator('#topic').fill(TOPIC);
+  await dashboard.getByRole('button', { name: 'Start panel' }).click();
+
+  const incident = dashboard.locator('.incident');
+  await expect(incident).toBeVisible({ timeout: 90_000 });
+  await expect(incident).toContainText('Flaky');
+  await expect(dashboard.locator('.chip.paused')).toBeVisible();
+
+  await incident.getByRole('button', { name: 'Continue without it' }).click();
+
+  await expect(dashboard.locator('.chip.done')).toBeVisible({ timeout: 90_000 });
+  await expect(dashboard.locator('.turn')).toHaveCount(2);
+});
+
+test('a run always reaches a terminal state, never a stuck Running', async ({ context, dashboard }) => {
+  // The worst failure the user hit. Asserted end to end, not just in the unit layer.
+  await openMockTab(context, 'mode=normal&words=60&speed=3&converge=yes');
+  await openMockTab(context, 'mode=normal&words=60&speed=3&converge=yes');
+  await openMockTab(context, 'mode=silent');
+
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+  const rows = dashboard.locator('li').filter({ hasText: 'MOCK' });
+  await expect(rows).toHaveCount(3);
+  await rows.nth(0).locator('select').selectOption('participant');
+  await rows.nth(1).locator('select').selectOption('participant');
+  // The silent tab is the narrator — the exact shape that used to kill the run at round 0.
+  await rows.nth(2).locator('select').selectOption('narrator');
+
+  await dashboard.locator('#topic').fill(TOPIC);
+  await dashboard.getByRole('button', { name: 'Start panel' }).click();
+
+  const incident = dashboard.locator('.incident');
+  await expect(incident).toBeVisible({ timeout: 120_000 });
+  await incident.getByRole('button', { name: 'Continue without it' }).click();
+
+  // Must finish the panel with the two working participants, not stall on Round 0.
+  await expect(dashboard.locator('.chip.done')).toBeVisible({ timeout: 120_000 });
+  // Scoped to the heading: the activity log also contains the text "Round 1".
+  await expect(dashboard.getByRole('heading', { name: 'Round 1' })).toBeVisible();
+  await expect(dashboard.locator('.turn')).toHaveCount(2);
+});
+
+test('Diagnose copies candidate selectors for a seated tab', async ({ context, dashboard }) => {
+  await openMockTab(context, 'mode=normal');
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+
+  const row = dashboard.locator('li').filter({ hasText: 'MOCK' }).first();
+  await row.getByRole('button', { name: 'Diagnose' }).click();
+  await expect(row.getByRole('button', { name: 'Copied' })).toBeVisible();
+});

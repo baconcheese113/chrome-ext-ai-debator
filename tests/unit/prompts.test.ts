@@ -103,6 +103,11 @@ describe('adapterForUrl', () => {
     expect(adapterForUrl('https://grok.com/')?.id).toBe('grok');
   });
 
+  it('ignores the port, as Chrome match patterns do', () => {
+    // Chrome patterns have no port component, so a pattern must match any port on that host.
+    expect(adapterForUrl('https://claude.ai:443/chat/abc')?.id).toBe('claude');
+  });
+
   it('does not match lookalike hosts', () => {
     expect(adapterForUrl('https://notclaude.ai/chat')).toBeUndefined();
     expect(adapterForUrl('https://claude.ai.evil.com/')).toBeUndefined();

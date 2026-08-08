@@ -6,3 +6,7 @@ node_modules/
 spike-results.json
 .playwright-mcp/
 *.png
+test-results/
+playwright-report/
+tests/mock-provider/dist/
+.auth/

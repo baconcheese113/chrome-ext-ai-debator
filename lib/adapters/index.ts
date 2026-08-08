@@ -1,3 +1,4 @@
+import { mockProvider } from './mock';
 import type { ProviderAdapter } from '../types';
 
 /**
@@ -204,26 +205,40 @@ const deepseek: ProviderAdapter = {
   response: { selectors: ['div.ds-markdown', 'div[class*="markdown"]'] },
 };
 
-export const ADAPTERS: ProviderAdapter[] = [
-  claude,
-  chatgpt,
-  gemini,
-  grok,
-  qwen,
-  kimi,
-  deepseek,
-];
+const REAL_ADAPTERS: ProviderAdapter[] = [claude, chatgpt, gemini, grok, qwen, kimi, deepseek];
+
+/**
+ * The mock provider is compiled in only for E2E builds (`npm run build:e2e`). Keeping it out
+ * of the shipped bundle means the published extension never asks for a localhost permission
+ * it has no reason to hold.
+ */
+export const ADAPTERS: ProviderAdapter[] =
+  import.meta.env.WXT_E2E === 'true' ? [...REAL_ADAPTERS, mockProvider] : REAL_ADAPTERS;
 
 export const ADAPTERS_BY_ID: Record<string, ProviderAdapter> = Object.fromEntries(
   ADAPTERS.map((a) => [a.id, a]),
 );
 
-/** Which adapter, if any, owns a URL. Used to turn open tabs into claimable seats. */
+/**
+ * Which adapter, if any, owns a URL. Used to turn open tabs into claimable seats.
+ *
+ * The port is stripped first, matching Chrome's own match-pattern semantics — a pattern's
+ * host never carries a port, so `http://localhost/*` must match `http://localhost:5599/x`.
+ */
 export function adapterForUrl(url: string): ProviderAdapter | undefined {
+  let normalized = url;
+  try {
+    const u = new URL(url);
+    u.port = '';
+    normalized = u.toString();
+  } catch {
+    // Not a parseable URL; fall through and match the raw string.
+  }
+
   return ADAPTERS.find((a) =>
     a.urlPatterns.some((p) => {
       const rx = new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
-      return rx.test(url);
+      return rx.test(normalized);
     }),
   );
 }
