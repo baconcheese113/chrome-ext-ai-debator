@@ -3,10 +3,35 @@ import type { ElementSketch } from './types';
 export function isVisible(el: Element): boolean {
   const he = el as HTMLElement;
   if (!he.isConnected) return false;
-  const rect = he.getBoundingClientRect();
-  if (rect.width === 0 && rect.height === 0) return false;
+
   const style = getComputedStyle(he);
-  return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+  if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+    return false;
+  }
+
+  // Geometry is only meaningful while the document is actually being rendered. Chrome skips
+  // layout for background tabs, so every rect comes back 0x0 there — treating that as
+  // "invisible" made every new message vanish and reported "message count stayed at N".
+  if (document.hidden) return true;
+
+  const rect = he.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0;
+}
+
+/**
+ * Text of an element, without depending on layout.
+ *
+ * `innerText` is layout-dependent: in a background tab Chrome skips layout and it returns
+ * '' or a fragment. That produced "a new message appeared but held no text" on ChatGPT and
+ * a 5-character reply on Claude, for messages that were fully present in the DOM.
+ * `textContent` is layout-independent, so it is the fallback whenever innerText looks empty.
+ */
+export function readText(el: HTMLElement): string {
+  const inner = el.innerText ?? '';
+  if (inner.trim().length > 0) return inner;
+  const raw = el.textContent ?? '';
+  // textContent has no line breaks; collapse runs of whitespace so word counts stay sane.
+  return raw.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
@@ -109,7 +134,7 @@ export function sketch(el: Element): ElementSketch {
     contentEditable: attr(el, 'contenteditable'),
     disabled: Boolean((el as HTMLButtonElement).disabled) || attr(el, 'aria-disabled') === 'true',
     visible: isVisible(el),
-    textLength: (el as HTMLElement).innerText?.length ?? 0,
+    textLength: readText(el as HTMLElement).length,
     suggestedSelector: suggestSelector(el),
   };
 }

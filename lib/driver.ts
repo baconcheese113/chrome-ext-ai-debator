@@ -1,5 +1,5 @@
 import { collectDiagnostics } from './diagnostics';
-import { anyVisible, deepQueryAll, firstVisible, isVisible, sleep } from './dom';
+import { anyVisible, deepQueryAll, firstVisible, isVisible, readText, sleep } from './dom';
 import type {
   DriveFailure,
   DriveRequest,
@@ -215,7 +215,7 @@ function injectText(el: HTMLElement, text: string, adapter: ProviderAdapter): bo
     el.textContent = text;
     el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text }));
   }
-  return (el.innerText ?? '').includes(text.slice(0, 20));
+  return readText(el).includes(text.slice(0, 20));
 }
 
 function submit(composer: HTMLElement, adapter: ProviderAdapter): boolean {
@@ -351,9 +351,9 @@ function pickLast(
     const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
     for (let i = matches.length - 1; i >= minIndex; i--) {
       const el = matches[i];
-      if (el && (el.innerText ?? '').trim().length > 0) {
-        return { text: el.innerText, html: el.innerHTML };
-      }
+      if (!el) continue;
+      const text = readText(el);
+      if (text.trim().length > 0) return { text, html: el.innerHTML };
     }
   }
   return undefined;

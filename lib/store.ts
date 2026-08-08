@@ -4,7 +4,14 @@ const KEY = 'runState';
 
 export const EMPTY_RUN: RunState = {
   id: '',
-  config: { topic: '', maxRounds: 6, convergence: 'self-report', autoDrop: false, wordBudget: 400 },
+  config: {
+    topic: '',
+    maxRounds: 6,
+    convergence: 'self-report',
+    autoDrop: false,
+    wordBudget: 400,
+    isolateWindows: true,
+  },
   status: 'idle',
   round: 0,
   seats: [],

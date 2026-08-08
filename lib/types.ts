@@ -176,6 +176,14 @@ export interface RunConfig {
   autoDrop: boolean;
   /** Per-response word budget written into the panel rules. */
   wordBudget: number;
+  /**
+   * Move each seat into its own window at run start.
+   *
+   * Chrome does not render background tabs and throttles their timers to once a second,
+   * then once a minute after five minutes hidden. Seats sharing a window therefore stall.
+   * A tab that is the active tab of an unfocused window keeps rendering normally.
+   */
+  isolateWindows: boolean;
 }
 
 export interface RunState {

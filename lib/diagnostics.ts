@@ -1,4 +1,4 @@
-import { deepQueryAll, isVisible, sketch } from './dom';
+import { deepQueryAll, isVisible, readText, sketch } from './dom';
 import type { Diagnostics, ElementSketch } from './types';
 
 /**
@@ -62,7 +62,7 @@ function buttonCandidates(): ElementSketch[] {
     .filter(isVisible)
     // Buttons with no label of any kind are almost never the send/stop control.
     .filter((e) => {
-      const label = `${e.getAttribute('aria-label') ?? ''} ${e.getAttribute('data-testid') ?? ''} ${(e as HTMLElement).innerText ?? ''}`;
+      const label = `${e.getAttribute("aria-label") ?? ""} ${e.getAttribute("data-testid") ?? ""} ${readText(e as HTMLElement)}`;
       return label.trim().length > 0;
     })
     .map(sketch)
@@ -78,7 +78,7 @@ function responseCandidates(): ElementSketch[] {
   const all = deepQueryAll('div, article, section, li, message-content, model-response');
   for (const el of all) {
     if (!isVisible(el)) continue;
-    const text = (el as HTMLElement).innerText ?? '';
+    const text = readText(el as HTMLElement);
     if (text.length < 80) continue;
     const parent = el.parentElement;
     if (!parent) continue;

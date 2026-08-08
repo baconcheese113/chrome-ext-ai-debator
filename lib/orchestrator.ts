@@ -135,6 +135,8 @@ async function runLoop(): Promise<void> {
   const participants = () => run.seats.filter((s) => s.role === 'participant' && s.status !== 'dropped');
   const narrator = () => run.seats.find((s) => s.role === 'narrator' && s.status !== 'dropped');
 
+  if (run.config.isolateWindows) await isolateSeatWindows(run.seats);
+
   // --- seeding ------------------------------------------------------------
   await appendLog('info', `Seeding ${participants().length} participants.`);
   const names = participants().map((s) => s.displayName);
@@ -340,6 +342,41 @@ async function sendTo(
       result?.diagnostics,
     );
     if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+  }
+}
+
+/**
+ * Give every seat its own window, so each is the active tab of a window and keeps rendering.
+ *
+ * Chrome does not lay out background tabs and throttles their timers — to once a second, and
+ * to once a minute after five minutes hidden. Seats sharing one window therefore appear to
+ * generate forever and then fail. The spike measured that an unfocused *window* returns full
+ * responses, so the fix is one tab per window, never minimized.
+ *
+ * The tab keeps its id and its conversation; only its window changes.
+ */
+async function isolateSeatWindows(seats: Seat[]): Promise<void> {
+  let moved = 0;
+  for (const seat of seats) {
+    try {
+      const tab = await chrome.tabs.get(seat.tabId);
+      const siblings = await chrome.tabs.query({ windowId: tab.windowId });
+      if (siblings.length > 1) {
+        await chrome.windows.create({ tabId: seat.tabId, focused: false, state: 'normal' });
+        moved++;
+      } else if (!tab.active) {
+        await chrome.tabs.update(seat.tabId, { active: true });
+      }
+    } catch (err) {
+      await appendLog('warn', `Could not give ${seat.displayName} its own window: ${String(err)}`);
+    }
+  }
+  if (moved > 0) {
+    await appendLog(
+      'info',
+      `Moved ${moved} tab(s) into separate windows. Chrome stops rendering background tabs, ` +
+        'so seats sharing a window stall. Leave the windows open and unminimized.',
+    );
   }
 }
 

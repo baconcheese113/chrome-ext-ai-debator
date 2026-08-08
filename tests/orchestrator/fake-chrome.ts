@@ -72,7 +72,7 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
     tabs: {
       async get(tabId: number) {
         if (scripts.get(tabId)?.gone) throw new Error('No tab with id');
-        return { id: tabId, windowId: 100 + tabId };
+        return { id: tabId, windowId: 100 + tabId, active: true };
       },
       async sendMessage(tabId: number, msg: { type: string; prompt?: string }) {
         const script = scripts.get(tabId);
@@ -90,8 +90,10 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
         return undefined;
       },
       async update() {},
-      async query() {
-        return [];
+      async query({ windowId }: { windowId?: number } = {}) {
+        // Every scripted tab starts in its own window (id = 100 + tabId), so isolation is
+        // already satisfied and the orchestrator has nothing to move.
+        return windowId === undefined ? [] : [{ id: windowId - 100, windowId, active: true }];
       },
       async create() {},
     },

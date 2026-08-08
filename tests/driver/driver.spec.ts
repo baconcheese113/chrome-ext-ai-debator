@@ -49,6 +49,44 @@ test('completion survives ambient DOM churn outside the conversation', async ({ 
   expect(Date.now() - started).toBeLessThan(20_000);
 });
 
+test('extracts correctly when layout is unavailable, as in a background tab', async ({ page }) => {
+  // The failure that broke every real run. Chrome skips layout for background tabs, so
+  // innerText returns '' and getBoundingClientRect returns 0x0 — models replied perfectly
+  // while the extension reported "held no text" and "count stayed at N".
+  //
+  // The headless shell does not emulate tab visibility, so rather than depend on that, this
+  // reproduces the mechanism directly: layout-dependent APIs are stubbed out for the
+  // conversation region only, leaving the composer usable so the run can proceed.
+  await open(page, 'mode=normal&words=120&speed=5');
+
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+
+    const inThread = (el: Element) => Boolean(el.closest?.('#thread'));
+
+    const innerTextDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText')!;
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return inThread(this) ? '' : innerTextDesc.get!.call(this);
+      },
+    });
+
+    const rect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return inThread(this)
+        ? ({ width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0 } as DOMRect)
+        : rect.call(this);
+    };
+  });
+
+  const res = await run(page);
+
+  expect(res.ok).toBe(true);
+  expect(res.extraction!.text.length).toBeGreaterThan(200);
+  expect(res.extraction!.text).toContain('concurrency');
+});
+
 test('reads the artifact when the thread holds only a summary', async ({ page }) => {
   await open(page, 'mode=artifact&words=150&speed=5');
   const res = await run(page);

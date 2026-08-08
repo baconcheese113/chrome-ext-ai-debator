@@ -29,6 +29,7 @@ const CONFIG: RunConfig = {
   convergence: 'self-report',
   autoDrop: false,
   wordBudget: 100,
+  isolateWindows: true,
 };
 
 const seat = (tabId: number, name: string, role: Seat['role'] = 'participant') => ({
