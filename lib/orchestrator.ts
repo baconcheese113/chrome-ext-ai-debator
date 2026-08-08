@@ -40,6 +40,21 @@ export function resolveIncident(action: 'retry' | 'drop' | 'abort'): void {
 export function requestStop(): void {
   stopRequested = true;
   incidentResolver?.('abort');
+  // If no loop is alive, there is nobody to observe the flag — finalise directly so Stop
+  // always works, including after a service-worker restart orphaned the stored state.
+  if (!running) void reconcileOrphanedRun('Stopped.');
+}
+
+/**
+ * MV3 can terminate the service worker at any time. When it comes back, stored state may
+ * claim a run is in flight while no loop exists. Called on startup and by Stop.
+ */
+export async function reconcileOrphanedRun(reason: string): Promise<void> {
+  if (running) return;
+  const run = await getRun();
+  if (run.status !== 'running' && run.status !== 'paused') return;
+  await patchRun({ status: 'aborted', incident: null, finishedAt: new Date().toISOString() });
+  await appendLog('warn', reason);
 }
 
 export function markConverged(): void {
@@ -47,6 +62,8 @@ export function markConverged(): void {
 }
 
 let running = false;
+
+export const isRunning = () => running;
 
 export async function startRun(
   config: RunConfig,
@@ -84,6 +101,17 @@ export async function startRun(
     clearInterval(keepaliveTimer);
     keepaliveTimer = undefined;
     running = false;
+    // Backstop: no exit path may leave the console showing a run that is no longer running.
+    // A stuck "Running" with nothing happening is worse than any honest terminal state.
+    const final = await getRun();
+    if (final.status === 'running' || final.status === 'paused') {
+      await patchRun({
+        status: 'aborted',
+        incident: null,
+        finishedAt: new Date().toISOString(),
+      });
+      await appendLog('warn', 'Run ended without reaching a normal finish.');
+    }
   }
 }
 
@@ -98,8 +126,21 @@ async function runLoop(): Promise<void> {
 
   const nar = narrator();
   if (nar) {
-    const ok = await sendTo(nar, narratorSeed(run.config, names), MIN_NARRATOR_CHARS, 0);
-    if (!ok) return;
+    const seeded = await sendTo(nar, narratorSeed(run.config, names), MIN_NARRATOR_CHARS, 0);
+    if (seeded === 'aborted') return;
+    // The narrator is an observer. Losing it costs us round summaries, not the panel —
+    // ending the run here would throw away every participant the user set up.
+    if (seeded === 'dropped') {
+      await appendLog('warn', 'Narrator unavailable. Continuing without round summaries.');
+      run = await getRun();
+      if (run.config.convergence === 'moderator') {
+        await appendLog(
+          'warn',
+          'Moderator convergence needs a narrator — falling back to participant self-reports.',
+        );
+        run = await patchRun({ config: { ...run.config, convergence: 'self-report' } });
+      }
+    }
   }
 
   for (let round = 1; round <= run.config.maxRounds; round++) {
@@ -131,8 +172,8 @@ async function runLoop(): Promise<void> {
     const results = await Promise.all(
       active.map(async (seat, i) => {
         await sleep(i * SEND_STAGGER_MS);
-        const ok = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
-        return { seat, ok };
+        const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
+        return { seat, ok: outcome === 'ok' };
       }),
     );
 
@@ -149,9 +190,10 @@ async function runLoop(): Promise<void> {
     const n = narrator();
     let summary = undefined;
     if (n && roundTurns.length) {
-      const ok = await sendTo(n, narratorRound(round, roundTurns), MIN_NARRATOR_CHARS, round);
+      const narrated = await sendTo(n, narratorRound(round, roundTurns), MIN_NARRATOR_CHARS, round);
       run = await getRun();
-      if (ok) {
+      if (narrated === 'aborted') break;
+      if (narrated === 'ok') {
         const narratorTurn = run.turns.filter((t) => t.round === round && t.seatId === n.seatId).pop();
         if (narratorTurn) {
           summary = parseNarratorSummary(round, narratorTurn.text);
@@ -197,23 +239,28 @@ function previousTurns(run: RunState, round: number, exceptSeatId: string): Turn
 /**
  * Drive one seat, recording the turn. On failure this applies the policy the user chose:
  * pause and ask, unless auto-drop is on.
+ *
+ * Returns a three-way outcome rather than a boolean. "This seat is out" and "stop the whole
+ * run" are different events, and collapsing them into false is what let a dropped narrator
+ * silently kill an entire panel.
  */
+type SendOutcome = 'ok' | 'dropped' | 'aborted';
+
 async function sendTo(
   seat: Seat,
   prompt: string,
   minChars: number,
   round: number,
-): Promise<boolean> {
+): Promise<SendOutcome> {
   for (;;) {
-    if (stopRequested) return false;
+    if (stopRequested) return 'aborted';
 
     await updateSeat(seat.seatId, { status: 'sending' });
 
     const guard = await guardWindow(seat);
     if (guard) {
       const action = await raiseIncident(seat, round, 'window-minimized', guard);
-      if (action === 'abort') return false;
-      if (action === 'drop') return false;
+      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
       continue;
     }
 
@@ -225,7 +272,7 @@ async function sendTo(
         'tab-closed',
         'content script not reachable — reload the tab and retry',
       );
-      if (action === 'abort' || action === 'drop') return false;
+      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
       continue;
     }
 
@@ -240,7 +287,7 @@ async function sendTo(
       })) as DriveResult;
     } catch (err) {
       const action = await raiseIncident(seat, round, 'tab-closed', String(err));
-      if (action === 'abort' || action === 'drop') return false;
+      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
       continue;
     }
 
@@ -263,7 +310,7 @@ async function sendTo(
       if (turn.via === 'artifact') {
         await appendLog('warn', `${seat.displayName} answered in an artifact; read from the panel.`);
       }
-      return true;
+      return 'ok';
     }
 
     const action = await raiseIncident(
@@ -272,7 +319,7 @@ async function sendTo(
       result?.failure ?? 'driver-error',
       result?.detail ?? 'no detail',
     );
-    if (action === 'abort' || action === 'drop') return false;
+    if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
   }
 }
 

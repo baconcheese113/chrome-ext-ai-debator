@@ -1,10 +1,20 @@
 import { ADAPTERS, adapterForUrl } from '../lib/adapters';
-import { markConverged, requestStop, resolveIncident, startRun } from '../lib/orchestrator';
+import {
+  markConverged,
+  reconcileOrphanedRun,
+  requestStop,
+  resolveIncident,
+  startRun,
+} from '../lib/orchestrator';
 import { EMPTY_RUN, getRun, setRun } from '../lib/store';
 import type { BgMessage, CandidateTab } from '../lib/types';
 
 export default defineBackground(() => {
   chrome.action.onClicked.addListener(() => void openDashboard());
+
+  // The worker just started, so no run loop can be alive. Anything the stored state claims
+  // is "running" is a leftover from a terminated worker.
+  void reconcileOrphanedRun('The extension restarted while a panel was running.');
 
   chrome.runtime.onMessage.addListener((msg: BgMessage, _sender, sendResponse) => {
     switch (msg.type) {
