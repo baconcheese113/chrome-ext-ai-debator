@@ -23,8 +23,22 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** Minimum plausible reply length. Below this we assume truncation, not brevity. */
 const MIN_REPLY_CHARS = 120;
 const MIN_NARRATOR_CHARS = 40;
-/** Small stagger so N tabs don't submit on the same tick. */
-const SEND_STAGGER_MS = 700;
+
+/**
+ * Deliberate delays, isolated so tests can zero them. Without this, orchestrator tests spend
+ * almost all their runtime asleep and nobody runs them.
+ */
+export const timings = {
+  /** Small stagger so N tabs don't submit on the same tick. */
+  sendStaggerMs: 700,
+  /** Jittered gap between rounds, to be less obviously a bot against rate limits. */
+  roundPauseMs: 1500,
+  roundPauseJitterMs: 1500,
+  /** How long to wait after injecting a content script before pinging again. */
+  injectSettleMs: 400,
+  /** Pause after restoring a minimized window, so the page can un-throttle. */
+  windowRestoreMs: 1000,
+};
 
 /** Set while a run is in flight so the service worker isn't killed mid-round. */
 let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
@@ -172,7 +186,7 @@ async function runLoop(): Promise<void> {
 
     const results = await Promise.all(
       active.map(async (seat, i) => {
-        await sleep(i * SEND_STAGGER_MS);
+        await sleep(i * timings.sendStaggerMs);
         const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
         return { seat, ok: outcome === 'ok' };
       }),
@@ -182,7 +196,7 @@ async function runLoop(): Promise<void> {
     run = await getRun();
     if (results.every((r) => !r.ok)) {
       await appendLog('error', 'Every participant failed this round. Stopping.');
-      await patchRun({ status: 'error' });
+      await patchRun({ status: 'error', finishedAt: new Date().toISOString() });
       return;
     }
 
@@ -220,6 +234,10 @@ async function runLoop(): Promise<void> {
     await appendLog('info', `Convergence (${run.config.convergence}): ${verdict.reason}`);
     if (verdict.converged) break;
     if (stopRequested) break;
+
+    // Jittered gap before the next round. These are subscription UIs with real rate limits,
+    // and a perfectly regular cadence is both harder on them and more obviously automated.
+    await sleep(timings.roundPauseMs + Math.random() * timings.roundPauseJitterMs);
   }
 
   await patchRun({
@@ -349,7 +367,7 @@ async function ensureContentScript(tabId: number): Promise<boolean> {
     await appendLog('warn', `Could not inject into tab ${tabId}: ${String(err)}`);
     return false;
   }
-  await sleep(400);
+  await sleep(timings.injectSettleMs);
   return ping();
 }
 
@@ -368,7 +386,7 @@ async function guardWindow(seat: Seat): Promise<string | undefined> {
         'warn',
         `${seat.displayName}'s window was minimized — restored it. Minimized windows are throttled and produce truncated responses.`,
       );
-      await sleep(1000);
+      await sleep(timings.windowRestoreMs);
     }
     return undefined;
   } catch (err) {
