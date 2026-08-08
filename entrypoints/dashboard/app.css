@@ -1,0 +1,104 @@
+/*
+ * Console chassis. The metaphor is a multi-channel signal analyser, not a chat client:
+ * each model is a channel, each round a sample, and convergence is coherence between
+ * channels. Channel colours are functional identity, never decoration — a seat keeps its
+ * colour everywhere it appears.
+ */
+
+:root {
+  --chassis: #171a21;
+  --panel: #1e222c;
+  --panel-hi: #252a36;
+  --rule: #2f3542;
+  --ink: #e8eaf0;
+  --ink-dim: #8b93a7;
+  --ink-faint: #5c6478;
+
+  --agree: #5ddba4;
+  --contest: #ff7a6b;
+  --open: #f5b942;
+  --accent: #4dd0e1;
+
+  --ch-1: #4dd0e1;
+  --ch-2: #ff7a6b;
+  --ch-3: #f5b942;
+  --ch-4: #a78bfa;
+  --ch-5: #5ddba4;
+  --ch-6: #f472b6;
+
+  /* Bahnschrift is the DIN-descended face shipped with Windows — engineering signage,
+     which is exactly the register a control surface wants. */
+  --font-label: 'Bahnschrift', 'DIN Alternate', 'Segoe UI Semibold', system-ui, sans-serif;
+  --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-data: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+
+  --r: 3px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--chassis);
+  color: var(--ink);
+  font: 14px/1.55 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Engineering signage: tracked, uppercase, small. Used for every structural label. */
+.label {
+  font: 600 11px/1 var(--font-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.data { font: 12px/1.4 var(--font-data); font-variant-numeric: tabular-nums; }
+
+h1, h2, h3 { font-family: var(--font-label); font-weight: 600; letter-spacing: .02em; margin: 0; }
+
+button {
+  font: 600 12px/1 var(--font-label);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  background: var(--panel-hi);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+button:hover:not(:disabled) { background: #303645; border-color: #414859; }
+button:disabled { opacity: .38; cursor: not-allowed; }
+button.primary { background: var(--accent); color: #0d1116; border-color: var(--accent); }
+button.primary:hover:not(:disabled) { background: #6fdcea; border-color: #6fdcea; }
+button.danger { color: var(--contest); border-color: #4a2b2b; }
+
+input, select, textarea {
+  background: var(--chassis);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  font: 14px/1.4 var(--font-body);
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+a { color: var(--accent); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+
+.field { display: grid; gap: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}

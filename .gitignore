@@ -3,3 +3,5 @@ node_modules/
 .wxt/
 *.log
 spike-results.json
+.playwright-mcp/
+*.png

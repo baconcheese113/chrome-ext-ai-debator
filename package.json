@@ -1,0 +1,21 @@
+{
+  "name": "ai-debator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "check": "tsc --noEmit && svelte-check --tsconfig ./tsconfig.json",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.5",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@wxt-dev/module-svelte": "^2.0.5",
+    "svelte": "^5.56.8",
+    "svelte-check": "^4.7.5",
+    "typescript": "^6.0.3",
+    "wxt": "^0.21.3"
+  }
+}
