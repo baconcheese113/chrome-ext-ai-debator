@@ -34,6 +34,24 @@
   const send = (type: string, extra: object = {}) =>
     void chrome.runtime.sendMessage({ type, ...extra });
 
+  let copied = $state(false);
+  /**
+   * A broken adapter is fixed from the page's actual selectors. Putting them one click away
+   * at the moment of failure is the difference between a fix and a guess.
+   */
+  async function copyDiagnostics() {
+    if (!run.incident?.diagnostics) return;
+    await navigator.clipboard.writeText(
+      JSON.stringify(
+        { failure: run.incident.failure, detail: run.incident.detail, ...run.incident.diagnostics },
+        null,
+        2,
+      ),
+    );
+    copied = true;
+    setTimeout(() => (copied = false), 2500);
+  }
+
   const statusText: Record<RunState['status'], string> = {
     idle: 'Ready',
     running: 'Running',
@@ -78,6 +96,9 @@
         <span class="data why">{run.incident.failure} — {run.incident.detail}</span>
       </div>
       <div class="acts">
+        {#if run.incident.diagnostics}
+          <button onclick={copyDiagnostics}>{copied ? 'Copied' : 'Copy page details'}</button>
+        {/if}
         <button onclick={() => send('RESOLVE_INCIDENT', { action: 'retry' })}>Try again</button>
         <button onclick={() => send('RESOLVE_INCIDENT', { action: 'drop' })}>Continue without it</button>
         <button class="danger" onclick={() => send('RESOLVE_INCIDENT', { action: 'abort' })}>Stop the panel</button>

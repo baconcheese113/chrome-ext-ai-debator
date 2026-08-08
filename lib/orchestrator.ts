@@ -9,6 +9,7 @@ import {
 } from './prompts';
 import { appendLog, getRun, patchRun, setRun } from './store';
 import type {
+  Diagnostics,
   DriveResult,
   Incident,
   RunConfig,
@@ -318,6 +319,7 @@ async function sendTo(
       round,
       result?.failure ?? 'driver-error',
       result?.detail ?? 'no detail',
+      result?.diagnostics,
     );
     if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
   }
@@ -379,6 +381,7 @@ async function raiseIncident(
   round: number,
   failure: Incident['failure'],
   detail: string,
+  diagnostics?: Diagnostics,
 ): Promise<'retry' | 'drop' | 'abort'> {
   await updateSeat(seat.seatId, { status: 'failed', lastError: `${failure}: ${detail}` });
   await appendLog('error', `${seat.displayName} failed (${failure}): ${detail}`);
@@ -397,6 +400,7 @@ async function raiseIncident(
     failure,
     detail,
     at: new Date().toISOString(),
+    diagnostics,
   };
   await patchRun({ status: 'paused', incident });
 

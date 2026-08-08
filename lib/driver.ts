@@ -13,8 +13,13 @@ import type {
  * so this has the least headroom there — shortening it breaks ChatGPT first.
  */
 const QUIESCENCE_MS = 1800;
-/** Quiet must hold this multiple of QUIESCENCE_MS before we call it done. */
+/**
+ * How long the DOM must stay quiet when we have NO stop button to corroborate with. Only
+ * used as the pessimistic path — a provider with a working stop button finishes far sooner.
+ */
 const QUIESCENCE_CONFIRM = 3;
+/** Once a stop button has appeared and then gone, this much quiet is enough. */
+const STOP_GONE_CONFIRM_MS = 900;
 const NEW_MESSAGE_TIMEOUT_MS = 45_000;
 const DETECT_TIMEOUT_MS = 300_000;
 
@@ -59,10 +64,20 @@ export async function drive(
 
     p = performance.now();
     const appeared = await waitFor(
-      () => (countMessages(adapter) > before ? true : undefined),
+      () => (countMessages(adapter).count > before.count ? true : undefined),
       NEW_MESSAGE_TIMEOUT_MS,
     );
-    if (!appeared) raise('no-new-message', `assistant message count stayed at ${before}`);
+    if (!appeared) {
+      // "Count stayed at 0" has two very different causes, and conflating them sends you
+      // hunting for a rate limit when the real problem is that no selector matches the page.
+      raise(
+        'no-new-message',
+        countMessages(adapter).count === 0
+          ? 'no element on this page matched the response selectors — this adapter needs ' +
+            'updating; use Diagnose on this tab'
+          : `assistant message count stayed at ${before.count}`,
+      );
+    }
     t('firstToken', p);
 
     p = performance.now();
@@ -70,9 +85,17 @@ export async function drive(
     t('detect', p);
 
     p = performance.now();
-    const extraction = extract(adapter);
+    // Only consider messages at or after the pre-send count, so a blank new turn can never
+    // silently resolve to the previous round's reply.
+    const after = countMessages(adapter);
+    const minIndex = after.selector === before.selector ? before.count : 0;
+    const extraction = extract(adapter, minIndex);
     if (!extraction || extraction.text.trim().length === 0) {
-      raise('extract-empty', 'no response selector yielded text');
+      raise(
+        'extract-empty',
+        `a new message appeared but held no text (selector: ${after.selector ?? 'none'}) — ` +
+          'the reply may have gone to a canvas or artifact; use Diagnose on this tab',
+      );
     }
     t('extract', p);
 
@@ -118,12 +141,17 @@ function validate(extraction: TurnExtraction, req: DriveRequest): void {
   }
 }
 
-function countMessages(adapter: ProviderAdapter): number {
+interface MessageCount {
+  selector: string | null;
+  count: number;
+}
+
+function countMessages(adapter: ProviderAdapter): MessageCount {
   for (const sel of adapter.response.selectors) {
     const n = deepQueryAll(sel).filter(isVisible).length;
-    if (n > 0) return n;
+    if (n > 0) return { selector: sel, count: n };
   }
-  return 0;
+  return { selector: null, count: 0 };
 }
 
 function findComposer(adapter: ProviderAdapter): HTMLElement | undefined {
@@ -195,9 +223,13 @@ function submit(composer: HTMLElement, adapter: ProviderAdapter): boolean {
 
 /**
  * The only completion signal the spike found trustworthy (33/40 decisions, correct whenever
- * the window was not minimized). Stop-button absence is used as corroboration only — never
- * send-button state, which is disabled whenever the composer is empty and so can never
- * distinguish "busy" from "idle".
+ * the window was not minimized). Stop-button absence corroborates it — never send-button
+ * state, which is disabled whenever the composer is empty and so cannot distinguish "busy"
+ * from "idle".
+ *
+ * Scoped to the conversation container rather than document.body. Watching the whole page
+ * means unrelated chrome — sidebars, autosave, blinking cursors — keeps resetting the quiet
+ * timer, which is what made Gemini take far longer to register than it actually needed.
  */
 async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
   const deadline = performance.now() + DETECT_TIMEOUT_MS;
@@ -206,17 +238,35 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
   const observer = new MutationObserver(() => {
     lastMutation = performance.now();
   });
-  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  observer.observe(conversationRoot(adapter), {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
 
   try {
+    let sawStop = false;
+    let stopGoneSince: number | null = null;
+
     while (performance.now() < deadline) {
       await sleep(250);
       const quietFor = performance.now() - lastMutation;
-      const stopVisible = anyVisible(adapter.generating.stopSelectors);
 
-      // A visible stop button means it's definitely still working, whatever the DOM is doing.
-      if (stopVisible) continue;
-      if (quietFor >= QUIESCENCE_MS * QUIESCENCE_CONFIRM) return;
+      if (anyVisible(adapter.generating.stopSelectors)) {
+        // A visible stop button means it is definitely still working, whatever the DOM does.
+        sawStop = true;
+        stopGoneSince = null;
+        continue;
+      }
+      stopGoneSince ??= performance.now();
+
+      // Fast path: generation demonstrably started and has demonstrably stopped.
+      if (sawStop && performance.now() - stopGoneSince >= STOP_GONE_CONFIRM_MS) {
+        if (quietFor >= QUIESCENCE_MS) return;
+      } else if (quietFor >= QUIESCENCE_MS * QUIESCENCE_CONFIRM) {
+        // Slow path: no usable stop button, so silence is all we have. Demand more of it.
+        return;
+      }
     }
     raise('detect-timeout', `no quiet period within ${DETECT_TIMEOUT_MS}ms`);
   } finally {
@@ -224,12 +274,23 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
   }
 }
 
-function extract(adapter: ProviderAdapter): TurnExtraction | undefined {
+/** The tightest element containing the conversation turns, so unrelated UI is ignored. */
+function conversationRoot(adapter: ProviderAdapter): Node {
+  for (const sel of adapter.response.selectors) {
+    const matches = deepQueryAll(sel).filter(isVisible);
+    const last = matches[matches.length - 1] as HTMLElement | undefined;
+    if (last?.parentElement) return last.parentElement;
+  }
+  return document.querySelector('main') ?? document.body;
+}
+
+function extract(adapter: ProviderAdapter, minIndex = 0): TurnExtraction | undefined {
   const o = adapter.overrides?.extract?.(adapter);
   if (o) return o;
 
-  const fromMessage = pickLast(adapter.response.selectors);
-  const fromArtifact = pickLast(adapter.artifact?.selectors ?? []);
+  const fromMessage = pickLast(adapter.response.selectors, minIndex);
+  // Artifacts are a separate panel, not part of the turn sequence, so no index guard.
+  const fromArtifact = pickLast(adapter.artifact?.selectors ?? [], 0);
 
   // Prefer whichever actually holds the content. Claude in Cowork puts a 278-char summary in
   // the thread and the real answer in the artifact, so "message exists" is not enough —
@@ -241,12 +302,25 @@ function extract(adapter: ProviderAdapter): TurnExtraction | undefined {
   return undefined;
 }
 
-function pickLast(selectors: string[]): { text: string; html: string } | undefined {
+/**
+ * Last match with actual text, walking backwards but never past `minIndex`.
+ *
+ * ChatGPT can leave an empty trailing assistant element — a canvas card, or a shell whose
+ * body moved elsewhere — so taking strictly the last node reports extract-empty for a reply
+ * that is sitting right there. Walking back finds it. The floor is what stops that walk from
+ * quietly returning the previous round's turn, which would corrupt the panel invisibly.
+ */
+function pickLast(
+  selectors: string[],
+  minIndex: number,
+): { text: string; html: string } | undefined {
   for (const sel of selectors) {
-    const matches = deepQueryAll(sel).filter(isVisible);
-    const el = matches[matches.length - 1] as HTMLElement | undefined;
-    if (el && (el.innerText ?? '').trim().length > 0) {
-      return { text: el.innerText, html: el.innerHTML };
+    const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
+    for (let i = matches.length - 1; i >= minIndex; i--) {
+      const el = matches[i];
+      if (el && (el.innerText ?? '').trim().length > 0) {
+        return { text: el.innerText, html: el.innerHTML };
+      }
     }
   }
   return undefined;

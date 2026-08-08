@@ -90,7 +90,7 @@ export interface DriveResult {
   detail?: string;
   extraction?: TurnExtraction;
   timings: Record<string, number>;
-  diagnostics?: unknown;
+  diagnostics?: Diagnostics;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +155,11 @@ export interface Incident {
   failure: DriveFailure | 'window-minimized' | 'tab-closed';
   detail: string;
   at: string;
+  /**
+   * Candidate selectors captured from the failing page. Carried all the way to the UI so a
+   * failure is directly actionable — a broken adapter is fixed from this, not from guessing.
+   */
+  diagnostics?: Diagnostics;
 }
 
 export interface LogEntry {
