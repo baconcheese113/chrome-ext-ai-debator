@@ -100,6 +100,19 @@ test('does not call a long mid-stream pause the end of the reply', async ({ page
   expect(res.extraction?.text.trim().endsWith('reason')).toBe(true);
 });
 
+test('does not hang when a stop button is left visible after the reply', async ({ page }) => {
+  // A real Claude thread was observed idle with "Stop response" still in the DOM. Believing
+  // it unconditionally costs the whole 300s detect timeout for that seat.
+  await open(page, 'mode=stuck-stop&words=80&speed=5');
+  const started = Date.now();
+  const res = await run(page);
+
+  expect(res.ok).toBe(true);
+  expect(res.extraction!.text.length).toBeGreaterThan(150);
+  // Must resolve via the stale-stop path (~15s), nowhere near the 300s timeout.
+  expect(Date.now() - started).toBeLessThan(45_000);
+});
+
 test('reports no-new-message when nothing ever replies', async ({ page }) => {
   await open(page, 'mode=silent', { newMessageTimeoutMs: 2000 });
   const res = await run(page);

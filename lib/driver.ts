@@ -20,6 +20,13 @@ const QUIESCENCE_MS = 1800;
 const QUIESCENCE_CONFIRM = 3;
 /** Once a stop button has appeared and then gone, this much quiet is enough. */
 const STOP_GONE_CONFIRM_MS = 900;
+/**
+ * How long a visible stop button is believed while the conversation DOM is completely
+ * static. Claude has been observed showing "Stop response" on an idle thread; without this
+ * the seat waits out the entire detect timeout. A model that is genuinely generating mutates
+ * the DOM, so prolonged silence beneath a stop button means the button is stale.
+ */
+const STALE_STOP_MS = 15_000;
 
 /**
  * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
@@ -273,8 +280,13 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
       await sleep(250);
       const quietFor = performance.now() - lastMutation;
 
-      if (anyVisible(adapter.generating.stopSelectors)) {
-        // A visible stop button means it is definitely still working, whatever the DOM does.
+      const stopVisible = anyVisible(adapter.generating.stopSelectors);
+      // A visible stop button normally means it is still working, whatever the DOM does —
+      // but only while the conversation is actually changing. A stop button sitting over a
+      // completely static thread is stale UI, and believing it costs the full timeout.
+      const stopIsCredible = stopVisible && quietFor < STALE_STOP_MS;
+
+      if (stopIsCredible) {
         sawStop = true;
         stopGoneSince = null;
         continue;

@@ -10,3 +10,6 @@ test-results/
 playwright-report/
 tests/mock-provider/dist/
 .auth/
+
+# Diagnostic captures contain real conversation text. This repo is public.
+docs/*-diag.json

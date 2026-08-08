@@ -15,11 +15,12 @@ const claude: ProviderAdapter = {
   urlPatterns: ['https://claude.ai/*'],
 
   composer: {
-    // CONFIRMED (10/10 runs)
+    // CONFIRMED 2026-08-08 from a live capture. The test id outlives the editor library,
+    // so it leads; ProseMirror (confirmed 10/10 in the spike) is the fallback.
     selectors: [
+      'div[data-testid="chat-input"]',
       'div[contenteditable="true"].ProseMirror',
       'div[enterkeyhint][contenteditable="true"]',
-      'div[contenteditable="true"]',
     ],
     kind: 'contenteditable',
   },
@@ -39,15 +40,14 @@ const claude: ProviderAdapter = {
   },
 
   response: {
-    // GUESS for plain chat — the spike only ever saw Cowork mode, where the thread carries
-    // an activity feed (li.font-claude-response-body) instead of a reply. Ordered so plain
-    // chat wins if present, with the Cowork feed last as a diagnosable fallback.
-    selectors: [
-      '.font-claude-message',
-      'div[data-testid="assistant-message"]',
-      'div[data-is-streaming] .font-claude-message',
-      'li.font-claude-response-body',
-    ],
+    // CONFIRMED 2026-08-08: `div.font-claude-response` is one element per assistant turn,
+    // matching 1:1 against data-testid="user-message". `.font-claude-message` no longer
+    // exists at all.
+    //
+    // Do NOT add `.font-claude-response-body`. It is applied per top-level BLOCK inside a
+    // reply — a <p> in one thread, an <li> in another — so a reply containing five bullets
+    // would read as five turns and extraction would return a single bullet.
+    selectors: ['div.font-claude-response', '.font-claude-response'],
   },
 
   artifact: {
@@ -67,9 +67,10 @@ const chatgpt: ProviderAdapter = {
   urlPatterns: ['https://chatgpt.com/*', 'https://chat.openai.com/*'],
 
   composer: {
-    // CONFIRMED (10/10)
+    // CONFIRMED (10/10 in the spike, re-confirmed 2026-08-08).
     selectors: [
       'div#prompt-textarea[contenteditable="true"]',
+      'div[aria-label="Chat with ChatGPT"]',
       '#prompt-textarea',
       'textarea[data-testid="prompt-textarea"]',
     ],
@@ -110,8 +111,10 @@ const gemini: ProviderAdapter = {
   urlPatterns: ['https://gemini.google.com/*'],
 
   composer: {
-    // CONFIRMED (10/10). Reached through shadow roots by deepQueryAll.
+    // CONFIRMED (10/10 in the spike, re-confirmed 2026-08-08). Reached through shadow roots
+    // by deepQueryAll. The aria-label leads as the more durable of the two.
     selectors: [
+      'div[aria-label="Enter a prompt for Gemini"]',
       'rich-textarea div.ql-editor[contenteditable="true"]',
       'div.ql-editor[contenteditable="true"]',
       'div[contenteditable="true"][role="textbox"]',
@@ -149,8 +152,14 @@ const grok: ProviderAdapter = {
   urlPatterns: ['https://grok.com/*'],
 
   composer: {
-    // CONFIRMED (10/10)
-    selectors: ['div[contenteditable="true"]', 'textarea[aria-label*="Ask" i]', 'textarea'],
+    // CONFIRMED 2026-08-08. The aria-label leads because a bare contenteditable can match
+    // almost anything on the page.
+    selectors: [
+      'div[aria-label="Ask Grok anything"]',
+      'div[aria-label*="Ask Grok" i]',
+      'div[contenteditable="true"]',
+      'textarea',
+    ],
     kind: 'auto',
   },
 
@@ -165,8 +174,13 @@ const grok: ProviderAdapter = {
   },
 
   response: {
-    // CONFIRMED (10/10) — the only provider that survived every condition, including minimized.
-    selectors: ['.message-bubble', 'div[data-message-author="assistant"]'],
+    // CONFIRMED 2026-08-08.
+    //
+    // `.message-bubble` is deliberately GONE. It matched 8 elements on a 4-exchange thread —
+    // user turns as well as assistant turns. That made "a new message appeared" fire on the
+    // echo of our own prompt rather than on the reply. It worked only by luck, and the luck
+    // would have run out the first time a reply was slow.
+    selectors: ['div[data-testid="assistant-message"]', '[data-testid="assistant-message"]'],
   },
 };
 

@@ -13,6 +13,7 @@
  *   ?mode=echo        replies with the prompt instead of an answer                  (Gemini throttled)
  *   ?mode=silent      accepts the prompt and never replies at all
  *   ?mode=slow        long mid-stream pauses, to attack false-positive completion
+ *   ?mode=stuck-stop  replies in full but leaves the stop button visible forever (real Claude)
  *
  *   &words=N          length of the generated reply (default 220)
  *   &speed=N          ms between chunks (default 20)
@@ -94,7 +95,9 @@ async function respond(prompt) {
     if (mode === 'empty-tail') append('assistant', '');
   }
 
-  stopBtn.hidden = true;
+  // Observed on a real idle Claude thread: the reply is finished but "Stop response" stays
+  // in the DOM. Leaving it visible here keeps the detector honest about stale UI.
+  if (mode !== 'stuck-stop') stopBtn.hidden = true;
   sendBtn.disabled = false;
 }
 
