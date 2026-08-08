@@ -1,6 +1,7 @@
 import { ADAPTERS, ADAPTERS_BY_ID } from '../lib/adapters';
 import { collectDiagnostics } from '../lib/diagnostics';
 import { drive } from '../lib/driver';
+import { checkAdapter } from '../lib/selector-check';
 import type { DriveResult } from '../lib/types';
 
 export default defineContentScript({
@@ -16,6 +17,12 @@ export default defineContentScript({
 
       if (msg?.type === 'DIAGNOSE') {
         sendResponse(collectDiagnostics('requested from dashboard'));
+        return false;
+      }
+
+      if (msg?.type === 'CHECK_ADAPTER') {
+        const adapter = ADAPTERS_BY_ID[msg.providerId];
+        sendResponse(adapter ? checkAdapter(adapter) : null);
         return false;
       }
 

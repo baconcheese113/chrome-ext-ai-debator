@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import type { AdapterCheck } from '../../lib/selector-check';
   import type { CandidateTab, ConvergenceStrategy, RunConfig, Seat } from '../../lib/types';
 
   let { onstart }: { onstart: (c: RunConfig, s: Array<Omit<Seat, 'status'>>) => void } = $props();
@@ -48,6 +49,30 @@
   }
   let diagnosed = $state<number | null>(null);
 
+  type TabCheck = AdapterCheck & { tabId: number; title: string };
+  let checks = $state<TabCheck[] | null>(null);
+  let checking = $state(false);
+
+  /**
+   * Read-only audit: does each adapter's selectors still match its page? Sends no prompt, so
+   * it costs no quota and leaves no trace in any thread.
+   */
+  async function checkAdapters() {
+    checking = true;
+    try {
+      checks = await chrome.runtime.sendMessage({ type: 'CHECK_ADAPTERS' });
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function copyChecks() {
+    await navigator.clipboard.writeText(JSON.stringify(checks, null, 2));
+    checksCopied = true;
+    setTimeout(() => (checksCopied = false), 2500);
+  }
+  let checksCopied = $state(false);
+
   const participants = $derived(tabs.filter((t) => roles[t.tabId] === 'participant'));
   const narrators = $derived(tabs.filter((t) => roles[t.tabId] === 'narrator'));
 
@@ -86,8 +111,37 @@
           reuses these threads for every round, so nothing new clutters your history.
         </p>
       </div>
-      <button onclick={load}>Rescan</button>
+      <div class="hdr-acts">
+        <button onclick={checkAdapters} disabled={checking}>
+          {checking ? 'Checking…' : 'Check adapters'}
+        </button>
+        <button onclick={load}>Rescan</button>
+      </div>
     </header>
+
+    {#if checks}
+      <div class="checks">
+        <div class="checks-head">
+          <span class="label">Selector check — nothing was sent to any model</span>
+          <button class="tiny" onclick={copyChecks}>{checksCopied ? 'Copied' : 'Copy report'}</button>
+        </div>
+        {#each checks as c (c.tabId)}
+          <div class="chk" class:bad={!c.ok}>
+            <span class="chk-name">{c.providerLabel}</span>
+            <div class="chk-items">
+              {#each c.checks as k, i (i)}
+                <span class="pill {k.state}" title={k.note ?? k.matched ?? ''}>
+                  {k.concern}{#if k.count}<span class="n">{k.count}</span>{/if}
+                </span>
+              {/each}
+            </div>
+          </div>
+          {#each c.checks.filter((k) => k.state !== 'ok' && k.note) as k, i (i)}
+            <p class="chk-note {k.state}">{k.concern}: {k.note}</p>
+          {/each}
+        {/each}
+      </div>
+    {/if}
 
     {#if loading}
       <p class="empty data">Scanning open tabs…</p>
@@ -198,6 +252,29 @@
   .foot { color: var(--ink-faint); font-size: 12px; margin: 12px 0 0; }
   .empty { color: var(--ink-dim); margin: 0; }
   .loaderr { color: var(--contest); margin: 0; }
+
+  .hdr-acts { display: flex; gap: 8px; flex-shrink: 0; }
+  .tiny { padding: 5px 9px; font-size: 10px; }
+
+  .checks {
+    border: 1px solid var(--rule); border-radius: var(--r);
+    padding: 10px 12px; margin-bottom: 14px; background: var(--chassis);
+  }
+  .checks-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .chk { display: flex; gap: 10px; align-items: center; padding: 3px 0; flex-wrap: wrap; }
+  .chk-name { font: 600 11px var(--font-label); letter-spacing: .1em; text-transform: uppercase; min-width: 78px; }
+  .chk-items { display: flex; gap: 5px; flex-wrap: wrap; }
+  .pill {
+    font: 11px var(--font-data); padding: 2px 7px; border-radius: 999px;
+    border: 1px solid var(--rule); color: var(--ink-faint);
+  }
+  .pill.ok { color: var(--agree); border-color: #24483a; }
+  .pill.fail { color: var(--contest); border-color: #4a2b2b; }
+  .pill.unknown { color: var(--open); border-color: #4a3f22; }
+  .pill .n { opacity: .6; margin-left: 5px; }
+  .chk-note { font-size: 11px; margin: 2px 0 6px 88px; color: var(--ink-faint); }
+  .chk-note.fail { color: var(--contest); }
+  .chk-note.unknown { color: var(--open); }
 
   .config { display: grid; gap: 14px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

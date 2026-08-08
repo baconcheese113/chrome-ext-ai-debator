@@ -120,6 +120,34 @@ test('a run always reaches a terminal state, never a stuck Running', async ({ co
   await expect(dashboard.locator('.turn')).toHaveCount(2);
 });
 
+test('Check adapters reports selector health without sending anything', async ({ context, dashboard }) => {
+  const tab = await openMockTab(context, 'mode=normal');
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+  await dashboard.getByRole('button', { name: 'Check adapters' }).click();
+
+  await expect(dashboard.locator('.checks')).toBeVisible();
+  await expect(dashboard.locator('.pill.ok', { hasText: 'composer' })).toBeVisible();
+  // A fresh thread has no replies, which must read as unknown rather than broken.
+  await expect(dashboard.locator('.pill.unknown', { hasText: 'responses' })).toBeVisible();
+
+  // The audit must be genuinely read-only: no message may have appeared in the thread.
+  await expect(tab.locator('.msg')).toHaveCount(0);
+});
+
+test('Check adapters flags an adapter whose selectors match nothing', async ({ context, dashboard }) => {
+  // Strip the composer the adapter expects — the exact shape of the Claude failure.
+  const tab = await openMockTab(context, 'mode=normal');
+  await tab.evaluate(() => document.getElementById('composer')?.remove());
+
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+  await dashboard.getByRole('button', { name: 'Check adapters' }).click();
+
+  await expect(dashboard.locator('.pill.fail', { hasText: 'composer' })).toBeVisible();
+  await expect(dashboard.locator('.chk.bad')).toBeVisible();
+});
+
 test('Diagnose copies candidate selectors for a seated tab', async ({ context, dashboard }) => {
   await openMockTab(context, 'mode=normal');
   await dashboard.bringToFront();

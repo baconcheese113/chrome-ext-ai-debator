@@ -1,4 +1,5 @@
-import { ADAPTERS, adapterForUrl } from '../lib/adapters';
+import { ADAPTERS, ADAPTERS_BY_ID, adapterForUrl } from '../lib/adapters';
+import type { AdapterCheck } from '../lib/selector-check';
 import {
   markConverged,
   reconcileOrphanedRun,
@@ -47,6 +48,10 @@ export default defineBackground(() => {
         void setRun(EMPTY_RUN).then(() => sendResponse({ ok: true }));
         return true;
 
+      case 'CHECK_ADAPTERS':
+        void checkAllTabs().then(sendResponse);
+        return true;
+
       case 'DIAGNOSE_TAB':
         void chrome.tabs
           .sendMessage(msg.tabId, { type: 'DIAGNOSE' })
@@ -59,6 +64,63 @@ export default defineBackground(() => {
     }
   });
 });
+
+/**
+ * Read-only audit of every open provider tab. Sends nothing to any model, so it costs no
+ * quota and adds nothing to any thread — it just reports which selectors still match.
+ */
+async function checkAllTabs(): Promise<Array<AdapterCheck & { tabId: number; title: string }>> {
+  const tabs = await listCandidateTabs();
+  const out: Array<AdapterCheck & { tabId: number; title: string }> = [];
+
+  for (const tab of tabs) {
+    const adapter = ADAPTERS_BY_ID[tab.providerId];
+    if (!adapter) continue;
+
+    let result: AdapterCheck | null = null;
+    try {
+      result = (await chrome.tabs.sendMessage(tab.tabId, {
+        type: 'CHECK_ADAPTER',
+        providerId: tab.providerId,
+      })) as AdapterCheck | null;
+    } catch {
+      // Tabs opened before the extension loaded have no content script yet.
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.tabId },
+          files: ['content-scripts/driver.js'],
+        });
+        result = (await chrome.tabs.sendMessage(tab.tabId, {
+          type: 'CHECK_ADAPTER',
+          providerId: tab.providerId,
+        })) as AdapterCheck | null;
+      } catch (err) {
+        out.push({
+          providerId: tab.providerId,
+          providerLabel: tab.providerLabel,
+          url: tab.url,
+          ok: false,
+          checks: [
+            {
+              concern: 'composer',
+              state: 'fail',
+              matched: null,
+              count: 0,
+              note: `Could not reach this tab: ${String(err)}. Reload it and try again.`,
+            },
+          ],
+          tabId: tab.tabId,
+          title: tab.title,
+        });
+        continue;
+      }
+    }
+
+    if (result) out.push({ ...result, tabId: tab.tabId, title: tab.title });
+  }
+
+  return out;
+}
 
 async function openDashboard(): Promise<void> {
   const url = chrome.runtime.getURL('/dashboard.html');

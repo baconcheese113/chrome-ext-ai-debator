@@ -247,4 +247,5 @@ export type BgMessage =
   | { type: 'STOP_RUN' }
   | { type: 'MARK_CONVERGED' }
   | { type: 'RESET_RUN' }
+  | { type: 'CHECK_ADAPTERS' }
   | { type: 'DIAGNOSE_TAB'; tabId: number };
