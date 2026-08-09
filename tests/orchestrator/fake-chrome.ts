@@ -29,6 +29,8 @@ export interface FakeChrome {
   minChars: Map<number, number[]>;
   windowUpdates: Array<{ windowId: number; state?: string }>;
   injections: number[];
+  submits: number[];
+  harvests: number[];
   install(): void;
   uninstall(): void;
 }
@@ -47,6 +49,9 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
   const minChars = new Map<number, number[]>();
   const windowUpdates: Array<{ windowId: number; state?: string }> = [];
   const injections: number[] = [];
+  /** Order of DRIVE_SUBMIT and DRIVE_AWAIT calls, so parallel mode's shape is assertable. */
+  const submits: number[] = [];
+  const harvests: number[] = [];
   const cursors = new Map<number, number>();
   const changeListeners: Array<(c: Record<string, unknown>, area: string) => void> = [];
 
@@ -86,6 +91,22 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
         if (msg.type === 'PING') {
           if (script?.uninjectable) throw new Error('Receiving end does not exist.');
           return { ok: true };
+        }
+        // Parallel mode: submit always succeeds in the fake, and the scripted DriveResult is
+        // consumed at harvest time — matching where a real failure would surface.
+        if (msg.type === 'DRIVE_SUBMIT') {
+          const list = prompts.get(tabId) ?? [];
+          list.push(msg.prompt ?? '');
+          prompts.set(tabId, list);
+          const floors = minChars.get(tabId) ?? [];
+          floors.push(msg.minChars ?? -1);
+          minChars.set(tabId, floors);
+          submits.push(tabId);
+          return { ok: true, before: { selector: '.m', count: 0 }, timings: {} };
+        }
+        if (msg.type === 'DRIVE_AWAIT') {
+          harvests.push(tabId);
+          return nextResult(tabId);
         }
         if (msg.type === 'DRIVE') {
           const list = prompts.get(tabId) ?? [];
@@ -145,6 +166,8 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
     minChars,
     windowUpdates,
     injections,
+    submits,
+    harvests,
     install() {
       (globalThis as { chrome?: unknown }).chrome = api;
     },

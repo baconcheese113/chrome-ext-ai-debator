@@ -29,6 +29,7 @@ const CONFIG: RunConfig = {
   convergence: 'self-report',
   autoDrop: false,
   wordBudget: 100,
+  turnMode: 'serial',
 };
 
 const seat = (tabId: number, name: string, role: Seat['role'] = 'participant') => ({
@@ -326,6 +327,70 @@ describe('narrator', () => {
     const run = getRunState();
     expect(run.config.convergence).toBe('self-report');
     expect(run.round).toBe(1);
+    expect(run.status).toBe('done');
+  });
+});
+
+describe('turn modes', () => {
+  it('serial drives one seat fully before starting the next', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 1, turnMode: 'serial' }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+    ]);
+
+    // Serial never uses the split phases.
+    expect(fake.submits).toEqual([]);
+    expect(fake.harvests).toEqual([]);
+    expect(getRunState().turns).toHaveLength(2);
+  });
+
+  it('parallel submits to everyone before harvesting anyone', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+        [3, { results: [reply('gamma')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 1, turnMode: 'parallel' }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(3, 'C'),
+    ]);
+
+    // The whole point: every prompt is in flight before the first reply is collected.
+    expect(fake.submits).toEqual([1, 2, 3]);
+    expect(fake.harvests).toEqual([1, 2, 3]);
+    expect(getRunState().turns).toHaveLength(3);
+    expect(getRunState().status).toBe('done');
+  });
+
+  it('parallel still applies the failure policy when a harvest fails', async () => {
+    setup(
+      new Map([
+        [1, { results: [fail('detect-timeout')] }],
+        [2, { results: [reply('beta')] }],
+        [3, { results: [reply('gamma')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 1, turnMode: 'parallel', autoDrop: true }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(3, 'C'),
+    ]);
+
+    const run = getRunState();
+    expect(run.seats.find((s) => s.tabId === 1)!.status).toBe('dropped');
+    expect(run.turns).toHaveLength(2);
     expect(run.status).toBe('done');
   });
 });

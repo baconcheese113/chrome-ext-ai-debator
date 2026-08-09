@@ -15,6 +15,7 @@
   let maxRounds = $state(6);
   let convergence = $state<ConvergenceStrategy>('self-report');
   let autoDrop = $state(false);
+  let turnMode = $state<RunConfig['turnMode']>('serial');
   let wordBudget = $state(400);
 
   let loadError = $state<string | null>(null);
@@ -94,7 +95,7 @@
       role: roles[t.tabId] as 'participant' | 'narrator',
     }));
     onstart(
-      { topic: topic.trim(), maxRounds, convergence, autoDrop, wordBudget },
+      { topic: topic.trim(), maxRounds, convergence, autoDrop, wordBudget, turnMode },
       seats,
     );
   }
@@ -220,10 +221,21 @@
       <span>Drop a failing model and keep going, instead of pausing to ask</span>
     </label>
 
+    <div class="field">
+      <label class="label" for="turnmode">Turn taking</label>
+      <select id="turnmode" bind:value={turnMode}>
+        <option value="serial">One at a time — slower, most reliable</option>
+        <option value="parallel">All at once — faster, less proven</option>
+      </select>
+    </div>
+
     <p class="note">
-      Models take their turns one at a time, and the panel brings each tab to the front as it
-      goes. Chrome only renders the active tab of a window, so a backgrounded model appears to
-      answer and produces nothing. Keep the tabs where you like — just don't minimize them.
+      Either way the panel brings each tab to the front when it needs it: Chrome only renders
+      the active tab of a window, so a backgrounded model appears to answer and produces
+      nothing. <strong>All at once</strong> submits to every model first so they generate
+      together, then collects the replies — about one generation per round instead of one per
+      model. It relies on tabs behaving while they stream in the background, which is exactly
+      what has bitten us before, so start with one at a time. Don't minimize the windows.
     </p>
 
     <div class="go">

@@ -1,6 +1,7 @@
 import { collectDiagnostics } from './diagnostics';
 import { anyVisible, deepQueryAll, firstVisible, isVisible, readText, sleep } from './dom';
 import type {
+  Diagnostics,
   DriveFailure,
   DriveRequest,
   DriveResult,
@@ -21,12 +22,15 @@ const QUIESCENCE_CONFIRM = 3;
 /** Once a stop button has appeared and then gone, this much quiet is enough. */
 const STOP_GONE_CONFIRM_MS = 900;
 /**
- * How long a visible stop button is believed while the conversation DOM is completely
- * static. Claude has been observed showing "Stop response" on an idle thread; without this
- * the seat waits out the entire detect timeout. A model that is genuinely generating mutates
- * the DOM, so prolonged silence beneath a stop button means the button is stale.
+ * How long a visible stop button is believed while the conversation DOM is completely static.
+ *
+ * Claude has been observed showing "Stop response" on an idle thread, which would otherwise
+ * cost the whole detect timeout. But this is an escape hatch for a rare stuck button, NOT a
+ * completion signal: at 15s it cut Grok off mid-think after 106 characters, because a model
+ * pausing to reason produces no DOM changes either. Long enough that only a genuinely stuck
+ * button trips it.
  */
-const STALE_STOP_MS = 15_000;
+const STALE_STOP_DEFAULT_MS = 120_000;
 
 /**
  * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
@@ -35,7 +39,19 @@ const STALE_STOP_MS = 15_000;
 export const driverTimings = {
   newMessageTimeoutMs: 45_000,
   detectTimeoutMs: 300_000,
+  staleStopMs: STALE_STOP_DEFAULT_MS,
 };
+
+/** Outcome of phase 1. `before` is the pre-send message count, needed by phase 2. */
+export interface SubmitResult {
+  ok: boolean;
+  before?: MessageCount;
+  failure?: DriveFailure;
+  detail?: string;
+  warning?: string;
+  timings: Record<string, number>;
+  diagnostics?: Diagnostics;
+}
 
 class DriveError extends Error {
   constructor(readonly failure: DriveFailure, readonly detail: string) {
@@ -43,17 +59,20 @@ class DriveError extends Error {
   }
 }
 
-export async function drive(
+/**
+ * Phase 1 of a turn: put the prompt in and send it, then return immediately.
+ *
+ * Split out so parallel mode can submit to every seat first and let them all generate at
+ * once. `before` is the pre-send message count, which phase 2 needs to know which turn is
+ * the new one.
+ */
+export async function submitTurn(
   adapter: ProviderAdapter,
   req: DriveRequest,
-): Promise<DriveResult> {
+): Promise<SubmitResult> {
   const timings: Record<string, number> = {};
   const t = (k: string, from: number) => (timings[k] = Math.round(performance.now() - from));
-
   try {
-    // Count existing assistant messages BEFORE sending. Waiting for this count to grow is
-    // both our "generation started" signal and our guarantee that we extract the new turn
-    // rather than re-reading the previous one — which matters now that threads persist.
     const before = countMessages(adapter);
 
     let p = performance.now();
@@ -63,11 +82,11 @@ export async function drive(
     t('findComposer', p);
 
     p = performance.now();
-    if (!(adapter.overrides?.injectText?.(composer, req.prompt, adapter) ??
-          injectText(composer, req.prompt, adapter))) {
-      raise('inject-failed', 'composer did not accept the text');
-    }
-    await sleep(350); // let framework state settle so the send button enables
+    const injected =
+      adapter.overrides?.injectText?.(composer, req.prompt, adapter) ??
+      injectText(composer, req.prompt, adapter);
+    const warning = injected ? undefined : 'composer read back empty after injection';
+    await sleep(350);
     t('inject', p);
 
     p = performance.now();
@@ -76,14 +95,38 @@ export async function drive(
     }
     t('submit', p);
 
-    p = performance.now();
+    return { ok: true, before, timings, warning };
+  } catch (err) {
+    const de = err instanceof DriveError ? err : undefined;
+    return {
+      ok: false,
+      failure: de?.failure ?? 'driver-error',
+      detail: de?.detail ?? String(err),
+      timings,
+      diagnostics: collectDiagnostics(de ? de.failure : 'unexpected error'),
+    };
+  }
+}
+
+/** Phase 2 of a turn: wait for the reply to finish, then extract and validate it. */
+export async function awaitTurn(
+  adapter: ProviderAdapter,
+  req: DriveRequest,
+  before: MessageCount,
+  priorTimings: Record<string, number> = {},
+  warning?: string,
+): Promise<DriveResult> {
+  const timings: Record<string, number> = { ...priorTimings };
+  const t = (k: string, from: number) => (timings[k] = Math.round(performance.now() - from));
+  let extracted: TurnExtraction | undefined;
+
+  try {
+    let p = performance.now();
     const appeared = await waitFor(
       () => (countMessages(adapter).count > before.count ? true : undefined),
       driverTimings.newMessageTimeoutMs,
     );
     if (!appeared) {
-      // "Count stayed at 0" has two very different causes, and conflating them sends you
-      // hunting for a rate limit when the real problem is that no selector matches the page.
       raise(
         'no-new-message',
         countMessages(adapter).count === 0
@@ -99,12 +142,10 @@ export async function drive(
     t('detect', p);
 
     p = performance.now();
-    // Only consider messages at or after the pre-send count, so a blank new turn can never
-    // silently resolve to the previous round's reply.
     const after = countMessages(adapter);
     const minIndex = after.selector === before.selector ? before.count : 0;
-    const extraction = extract(adapter, minIndex);
-    if (!extraction || extraction.text.trim().length === 0) {
+    extracted = extract(adapter, minIndex);
+    if (!extracted || extracted.text.trim().length === 0) {
       raise(
         'extract-empty',
         `a new message appeared but held no text (selector: ${after.selector ?? 'none'}) — ` +
@@ -113,19 +154,38 @@ export async function drive(
     }
     t('extract', p);
 
-    validate(extraction!, req);
-
-    return { ok: true, extraction, timings };
+    validate(extracted, req);
+    return { ok: true, extraction: extracted, timings, warning };
   } catch (err) {
     const de = err instanceof DriveError ? err : undefined;
     return {
       ok: false,
       failure: de?.failure ?? 'driver-error',
       detail: de?.detail ?? String(err),
+      warning,
+      extraction: extracted,
       timings,
       diagnostics: collectDiagnostics(de ? de.failure : 'unexpected error'),
     };
   }
+}
+
+/** Both phases back to back — serial mode, and what the driver tests exercise. */
+export async function drive(
+  adapter: ProviderAdapter,
+  req: DriveRequest,
+): Promise<DriveResult> {
+  const submitted = await submitTurn(adapter, req);
+  if (!submitted.ok) {
+    return {
+      ok: false,
+      failure: submitted.failure,
+      detail: submitted.detail,
+      timings: submitted.timings,
+      diagnostics: submitted.diagnostics,
+    };
+  }
+  return awaitTurn(adapter, req, submitted.before!, submitted.timings, submitted.warning);
 }
 
 function raise(failure: DriveFailure, detail: string): never {
@@ -169,7 +229,7 @@ function validate(extraction: TurnExtraction, req: DriveRequest): void {
   }
 }
 
-interface MessageCount {
+export interface MessageCount {
   selector: string | null;
   count: number;
 }
@@ -284,7 +344,7 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
       // A visible stop button normally means it is still working, whatever the DOM does —
       // but only while the conversation is actually changing. A stop button sitting over a
       // completely static thread is stale UI, and believing it costs the full timeout.
-      const stopIsCredible = stopVisible && quietFor < STALE_STOP_MS;
+      const stopIsCredible = stopVisible && quietFor < driverTimings.staleStopMs;
 
       if (stopIsCredible) {
         sawStop = true;

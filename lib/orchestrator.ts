@@ -190,17 +190,10 @@ async function runLoop(): Promise<void> {
       );
     }
 
-    // Sequential, not parallel. Chrome renders only the active tab of a window, so a seat
-    // has to be fronted to be driven reliably — and only one tab can be active at a time.
-    // The panel is still simultaneous in the sense that matters: every participant answers
-    // the same round and sees every other participant's previous turn.
-    const results: Array<{ seat: Seat; ok: boolean }> = [];
-    for (const seat of active) {
-      if (stopRequested) break;
-      const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
-      results.push({ seat, ok: outcome === 'ok' });
-      await sleep(timings.sendStaggerMs);
-    }
+    const results =
+      run.config.turnMode === 'parallel'
+        ? await runRoundParallel(active, prompts, round)
+        : await runRoundSerial(active, prompts, round);
 
     if (stopRequested) break;
     run = await getRun();
@@ -255,6 +248,119 @@ async function runLoop(): Promise<void> {
     finishedAt: new Date().toISOString(),
   });
   await appendLog('info', 'Run finished.');
+}
+
+type RoundResult = Array<{ seat: Seat; ok: boolean }>;
+
+/**
+ * One seat at a time, start to finish. Slowest, and the most robust: the tab being driven is
+ * always the active one, so it is always rendered and never timer-throttled.
+ */
+async function runRoundSerial(
+  active: Seat[],
+  prompts: Map<string, string>,
+  round: number,
+): Promise<RoundResult> {
+  const results: RoundResult = [];
+  for (const seat of active) {
+    if (stopRequested) break;
+    const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
+    results.push({ seat, ok: outcome === 'ok' });
+    await sleep(timings.sendStaggerMs);
+  }
+  return results;
+}
+
+/**
+ * Submit to every seat first, then harvest each. Models generate concurrently, so a round
+ * costs roughly one generation instead of N.
+ *
+ * Each tab is still fronted for its submit and for its harvest — injection and completion
+ * detection both need a rendered tab. What happens in between, while the model streams into
+ * a background tab, is the part this mode bets on. That bet is why serial remains the
+ * default: a background tab's timers are throttled to once a second, then once a minute
+ * after five minutes hidden.
+ */
+async function runRoundParallel(
+  active: Seat[],
+  prompts: Map<string, string>,
+  round: number,
+): Promise<RoundResult> {
+  const submitted = new Map<string, { before: unknown; warning?: string }>();
+  const results: RoundResult = [];
+
+  for (const seat of active) {
+    if (stopRequested) break;
+    try {
+      await focusSeatTab(seat);
+      await updateSeat(seat.seatId, { status: 'sending' });
+      if (!(await ensureContentScript(seat.tabId))) continue;
+      const res = await chrome.tabs.sendMessage(seat.tabId, {
+        type: 'DRIVE_SUBMIT',
+        providerId: seat.providerId,
+        prompt: prompts.get(seat.seatId)!,
+        minChars: MIN_REPLY_CHARS,
+      });
+      if (res?.ok) {
+        submitted.set(seat.seatId, { before: res.before, warning: res.warning });
+        await updateSeat(seat.seatId, { status: 'waiting' });
+      }
+    } catch {
+      // Leave it unsubmitted; the harvest loop below falls back to a full retry.
+    }
+    await sleep(timings.sendStaggerMs);
+  }
+
+  for (const seat of active) {
+    if (stopRequested) break;
+    const pending = submitted.get(seat.seatId);
+    if (!pending) {
+      // Never got its prompt in — fall back to the serial path, which carries the full
+      // incident and retry machinery.
+      const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
+      results.push({ seat, ok: outcome === 'ok' });
+      continue;
+    }
+
+    let result: DriveResult | undefined;
+    try {
+      await focusSeatTab(seat);
+      result = (await chrome.tabs.sendMessage(seat.tabId, {
+        type: 'DRIVE_AWAIT',
+        providerId: seat.providerId,
+        prompt: prompts.get(seat.seatId)!,
+        minChars: MIN_REPLY_CHARS,
+        before: pending.before,
+        warning: pending.warning,
+      })) as DriveResult;
+    } catch (err) {
+      result = { ok: false, failure: 'tab-closed' as never, detail: String(err), timings: {} };
+    }
+
+    await recordAttempt(seat, round, 1, prompts.get(seat.seatId)!, result);
+    if (result?.ok && result.extraction) {
+      await commitTurn(seat, round, result);
+      results.push({ seat, ok: true });
+    } else {
+      // Hand the failure to the shared policy: pause and ask, or auto-drop.
+      const action = await raiseIncident(
+        seat,
+        round,
+        result?.failure ?? 'driver-error',
+        result?.detail ?? 'no detail',
+        result?.diagnostics,
+      );
+      if (action === 'retry') {
+        const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
+        results.push({ seat, ok: outcome === 'ok' });
+      } else {
+        results.push({ seat, ok: false });
+        if (action === 'abort') break;
+      }
+    }
+  }
+
+  return results;
 }
 
 /** Turns from `round` by everyone except `exceptSeatId` — what a participant is shown. */
@@ -331,24 +437,7 @@ async function sendTo(
     await recordAttempt(seat, round, attempt, prompt, result);
 
     if (result?.ok && result.extraction) {
-      const text = result.extraction.text;
-      const turn: Turn = {
-        round,
-        seatId: seat.seatId,
-        displayName: seat.displayName,
-        text: stripConverged(text),
-        html: result.extraction.html,
-        converged: parseConverged(text),
-        via: result.extraction.via,
-        wordCount: text.trim().split(/\s+/).length,
-        at: new Date().toISOString(),
-      };
-      const run = await getRun();
-      await setRun({ ...run, turns: [...run.turns, turn] });
-      await updateSeat(seat.seatId, { status: 'done', lastError: undefined });
-      if (turn.via === 'artifact') {
-        await appendLog('warn', `${seat.displayName} answered in an artifact; read from the panel.`);
-      }
+      await commitTurn(seat, round, result);
       return 'ok';
     }
 
@@ -360,6 +449,31 @@ async function sendTo(
       result?.diagnostics,
     );
     if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+  }
+}
+
+/** Store a completed turn and mark the seat done. Shared by both turn modes. */
+async function commitTurn(seat: Seat, round: number, result: DriveResult): Promise<void> {
+  const text = result.extraction!.text;
+  const turn: Turn = {
+    round,
+    seatId: seat.seatId,
+    displayName: seat.displayName,
+    text: stripConverged(text),
+    html: result.extraction!.html,
+    converged: parseConverged(text),
+    via: result.extraction!.via,
+    wordCount: text.trim().split(/\s+/).length,
+    at: new Date().toISOString(),
+  };
+  const run = await getRun();
+  await setRun({ ...run, turns: [...run.turns, turn] });
+  await updateSeat(seat.seatId, { status: 'done', lastError: undefined });
+  if (turn.via === 'artifact') {
+    await appendLog('warn', `${seat.displayName} answered in an artifact; read from the panel.`);
+  }
+  if (result.warning) {
+    await appendLog('warn', `${seat.displayName}: ${result.warning}`);
   }
 }
 
@@ -387,6 +501,7 @@ async function recordAttempt(
     outcome: result?.ok ? 'ok' : 'failed',
     failure: result?.failure,
     detail: result?.detail,
+    warning: result?.warning,
     timings: result?.timings ?? {},
     promptChars: prompt.length,
     promptHead: prompt.slice(0, 400),

@@ -10,7 +10,11 @@ import type { DriveResult, ProviderAdapter } from '../../lib/types';
 
 const PROMPT = 'Explain optimistic concurrency control in detail, with examples.';
 
-async function open(page: Page, query: string, timeouts?: { newMessageTimeoutMs?: number }) {
+async function open(
+  page: Page,
+  query: string,
+  timeouts?: { newMessageTimeoutMs?: number; staleStopMs?: number },
+) {
   await page.goto(`/index.html?${query}`);
   await page.addScriptTag({ url: '/dist/driver-harness.js' });
   await page.waitForFunction(() => Boolean(window.__driver));
@@ -141,13 +145,15 @@ test('does not call a long mid-stream pause the end of the reply', async ({ page
 test('does not hang when a stop button is left visible after the reply', async ({ page }) => {
   // A real Claude thread was observed idle with "Stop response" still in the DOM. Believing
   // it unconditionally costs the whole 300s detect timeout for that seat.
-  await open(page, 'mode=stuck-stop&words=80&speed=5');
+  // Shrunk from the production 120s. That threshold is deliberately long — at 15s it cut
+  // Grok off mid-think — so the test shrinks it rather than waiting two minutes.
+  await open(page, 'mode=stuck-stop&words=80&speed=5', { staleStopMs: 8000 });
   const started = Date.now();
   const res = await run(page);
 
   expect(res.ok).toBe(true);
   expect(res.extraction!.text.length).toBeGreaterThan(150);
-  // Must resolve via the stale-stop path (~15s), nowhere near the 300s timeout.
+  // Resolves via the stale-stop escape, nowhere near the 300s detect timeout.
   expect(Date.now() - started).toBeLessThan(45_000);
 });
 
@@ -190,7 +196,10 @@ test('never returns a previous turn when the newest one is blank', async ({ page
 
   const second = await run(page, mockProvider, 100_000);
   expect(second.ok).toBe(false);
-  expect(second.extraction?.text).not.toBe(first.extraction?.text);
+  // Replies are numbered, so "not the previous turn" is a real assertion rather than a
+  // coincidence of identical mock text.
+  expect(first.extraction!.text).toContain('Reply #1.');
+  expect(second.extraction?.text ?? '').not.toContain('Reply #1.');
 });
 
 test('diagnostics name a pasteable selector for the composer', async ({ page }) => {

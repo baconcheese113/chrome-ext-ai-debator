@@ -39,11 +39,18 @@ const LOREM = [
   'backpressure', 'consistency', 'replication', 'invariant', 'scheduler', 'coordination',
 ];
 
+/**
+ * Replies carry a sequence number so successive turns are distinguishable. Without it every
+ * reply is byte-identical, and "we did not return the previous turn" cannot be asserted —
+ * a test claiming to check that would pass no matter what.
+ */
+let turnSeq = 0;
+
 function body(prompt) {
   if (mode === 'echo') return `You said\n\n${prompt}`;
   const out = [];
   for (let i = 0; i < words; i++) out.push(LOREM[i % LOREM.length]);
-  return `Considering the question, here is the reasoning. ${out.join(' ')}.`;
+  return `Reply #${++turnSeq}. Considering the question, here is the reasoning. ${out.join(' ')}.`;
 }
 
 function append(cls, text) {

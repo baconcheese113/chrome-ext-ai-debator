@@ -88,6 +88,12 @@ export interface DriveResult {
   ok: boolean;
   failure?: DriveFailure;
   detail?: string;
+  /** Non-fatal oddity worth recording, e.g. the composer read back empty after injection. */
+  warning?: string;
+  /**
+   * Present on success, and on failures where something WAS extracted and then rejected.
+   * A rejected reply is the evidence for the rejection.
+   */
   extraction?: TurnExtraction;
   timings: Record<string, number>;
   diagnostics?: Diagnostics;
@@ -187,6 +193,7 @@ export interface TurnRecord {
   outcome: 'ok' | 'failed';
   failure?: string;
   detail?: string;
+  warning?: string;
   timings: Record<string, number>;
   /** Trimmed: enough to see what was asked without carrying whole transcripts. */
   promptChars: number;
@@ -207,6 +214,14 @@ export interface RunConfig {
   autoDrop: boolean;
   /** Per-response word budget written into the panel rules. */
   wordBudget: number;
+  /**
+   * 'serial'   — front each tab, drive it to completion, move on. Slowest, most reliable.
+   * 'parallel' — front each tab just long enough to submit, so every model generates at the
+   *              same time, then harvest each in turn. Roughly one generation per round
+   *              instead of N, at the cost of relying on background tabs behaving while
+   *              they stream.
+   */
+  turnMode: 'serial' | 'parallel';
 }
 
 export interface RunState {

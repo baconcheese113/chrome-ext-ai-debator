@@ -15,6 +15,7 @@ const config: RunConfig = {
   convergence: 'self-report',
   autoDrop: false,
   wordBudget: 400,
+  turnMode: 'serial',
 };
 
 const turn = (name: string, text: string): Turn => ({

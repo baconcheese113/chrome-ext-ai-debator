@@ -10,6 +10,7 @@ export const EMPTY_RUN: RunState = {
     convergence: 'self-report',
     autoDrop: false,
     wordBudget: 400,
+    turnMode: 'serial',
   },
   status: 'idle',
   round: 0,
