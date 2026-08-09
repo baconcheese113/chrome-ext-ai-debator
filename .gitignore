@@ -11,5 +11,7 @@ playwright-report/
 tests/mock-provider/dist/
 .auth/
 
-# Diagnostic captures contain real conversation text. This repo is public.
+# Captures and exports contain real conversation text. This repo is public.
 docs/*-diag.json
+docs/*run*.json
+ai-debator-run-*.json
