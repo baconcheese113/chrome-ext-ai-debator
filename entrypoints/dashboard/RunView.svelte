@@ -71,7 +71,7 @@
         </header>
 
         {#if summary}
-          <NarratorCard {summary} />
+          <NarratorCard {summary} {run} />
         {:else if r === run.round && run.status === 'running'}
           <p class="pending data">Waiting on this round…</p>
         {/if}

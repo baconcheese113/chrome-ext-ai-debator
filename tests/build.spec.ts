@@ -16,7 +16,16 @@ const OUT = join(ROOT, '.output', 'chrome-mv3');
 describe('production build', () => {
   it('builds without error and emits the expected entrypoints', () => {
     // Throws on non-zero exit, so a silent build failure fails the suite.
-    execSync('npx wxt build', { cwd: ROOT, stdio: 'pipe' });
+    //
+    // Retried once on EBUSY: on Windows anything holding .output — a static server, an
+    // indexer, antivirus — makes wxt fail to clear the directory. That is a transient lock,
+    // not a broken build, and failing on it trains people to ignore this test.
+    try {
+      execSync('npx wxt build', { cwd: ROOT, stdio: 'pipe' });
+    } catch (err) {
+      if (!/EBUSY|EPERM|resource busy/i.test(String(err))) throw err;
+      execSync('npx wxt build', { cwd: ROOT, stdio: 'pipe' });
+    }
 
     for (const f of ['manifest.json', 'background.js', 'dashboard.html']) {
       expect(existsSync(join(OUT, f)), `${f} missing from build output`).toBe(true);

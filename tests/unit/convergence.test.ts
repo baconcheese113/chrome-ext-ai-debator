@@ -16,6 +16,7 @@ const turn = (name: string, converged: boolean | null): Turn => ({
 
 const summary = (over: Partial<RoundSummary> = {}): RoundSummary => ({
   round: 1,
+  plainSummary: '',
   keyPoints: [],
   agreements: [],
   disagreements: [],
@@ -70,6 +71,7 @@ describe('evaluateConvergence — manual', () => {
 
 describe('parseNarratorSummary', () => {
   const body = {
+    plainSummary: 'A said one thing, B disagreed, and A backed down.',
     keyPoints: [{ agent: 'A', points: ['p1'] }],
     agreements: ['ag'],
     disagreements: ['dis'],
@@ -83,6 +85,15 @@ describe('parseNarratorSummary', () => {
     expect(s.parseError).toBeUndefined();
     expect(s.converged).toBe(true);
     expect(s.agreements).toEqual(['ag']);
+    expect(s.plainSummary).toContain('backed down');
+  });
+
+  it('tolerates a narrator that omits plainSummary', () => {
+    // Older narrator threads were seeded without the field; the card falls back rather than
+    // rendering an empty block.
+    const { plainSummary, ...withoutIt } = body;
+    void plainSummary;
+    expect(parseNarratorSummary(1, JSON.stringify(withoutIt)).plainSummary).toBe('');
   });
 
   it('reads bare json', () => {

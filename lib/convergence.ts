@@ -56,6 +56,7 @@ export function evaluateConvergence(
 export function parseNarratorSummary(round: number, raw: string): RoundSummary {
   const base: RoundSummary = {
     round,
+    plainSummary: '',
     keyPoints: [],
     agreements: [],
     disagreements: [],
@@ -73,6 +74,7 @@ export function parseNarratorSummary(round: number, raw: string): RoundSummary {
     const parsed = JSON.parse(candidate) as Partial<RoundSummary>;
     return {
       ...base,
+      plainSummary: typeof parsed.plainSummary === 'string' ? parsed.plainSummary : '',
       keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints : [],
       agreements: strings(parsed.agreements),
       disagreements: strings(parsed.disagreements),

@@ -139,6 +139,8 @@ export interface Turn {
 
 export interface RoundSummary {
   round: number;
+  /** Plain-language account of the round, for a reader who is not in the field. */
+  plainSummary: string;
   keyPoints: Array<{ agent: string; points: string[] }>;
   agreements: string[];
   disagreements: string[];
