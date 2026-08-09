@@ -21,6 +21,9 @@ export const EMPTY_RUN: RunState = {
   log: [],
   records: [],
   finalSummary: null,
+  steers: [],
+  pendingSteer: null,
+  awaitingSteer: false,
   startedAt: null,
   finishedAt: null,
 };

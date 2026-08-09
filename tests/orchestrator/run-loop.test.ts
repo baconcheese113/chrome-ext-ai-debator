@@ -68,6 +68,23 @@ afterEach(() => fake?.uninstall());
 
 const getRunState = () => fake.storage.local.runState as RunState;
 
+/** Polls until a condition holds, or gives up. Returns whether it held. */
+async function waitFor(cond: () => boolean, tries = 400): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  return false;
+}
+
+/** Queue a note the way the background message handler does. */
+async function patchPending(text: string): Promise<void> {
+  const run = getRunState();
+  await (globalThis as unknown as { chrome: typeof chrome }).chrome.storage.local.set({
+    runState: { ...run, pendingSteer: text },
+  });
+}
+
 /** Waits for the run to pause on an incident, then answers it. */
 async function answerIncident(
   orch: typeof import('../../lib/orchestrator'),
@@ -392,6 +409,79 @@ describe('turn modes', () => {
     expect(run.seats.find((s) => s.tabId === 1)!.status).toBe('dropped');
     expect(run.turns).toHaveLength(2);
     expect(run.status).toBe('done');
+  });
+});
+
+describe('steering', () => {
+  it('delivers a queued note to every participant, and only once', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    // Queued before the run starts, so it lands in round 1.
+    await orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
+
+    const run = getRunState();
+    expect(run.steers).toEqual([]);
+    // Nothing queued, so no note text should reach anyone.
+    expect(fake.prompts.get(1)![0]).not.toContain('MODERATOR');
+  });
+
+  it('injects the note into round prompts for all seats simultaneously', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const running = orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
+
+    // Queue mid-run; it must land at the next round boundary, not the current one.
+    await waitFor(() => (getRunState()?.round ?? 0) >= 1);
+    await patchPending('Bring in non-Western sources.');
+    await running;
+
+    const run = getRunState();
+    expect(run.steers).toHaveLength(1);
+    expect(run.steers[0]!.round).toBe(2);
+    expect(run.pendingSteer).toBeNull();
+
+    // Both participants received it, in round 2's prompt.
+    for (const tabId of [1, 2]) {
+      const round2 = fake.prompts.get(tabId)![1]!;
+      expect(round2).toContain('NOTE FROM THE MODERATOR');
+      expect(round2).toContain('non-Western sources');
+    }
+    // And it is not repeated once consumed.
+    expect(fake.prompts.get(1)![0]).not.toContain('NOTE FROM THE MODERATOR');
+  });
+
+  it('holds at the round boundary when asked, and resumes', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const running = orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
+
+    orch.pauseAfterRound();
+    expect(await waitFor(() => getRunState()?.awaitingSteer === true)).toBe(true);
+
+    // The run must genuinely be held — round 2 has not begun.
+    expect(getRunState().round).toBe(1);
+
+    orch.resumeRun();
+    await running;
+
+    expect(getRunState().awaitingSteer).toBe(false);
+    expect(getRunState().round).toBe(2);
+    expect(getRunState().status).toBe('done');
   });
 });
 

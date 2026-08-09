@@ -152,6 +152,20 @@ export interface RoundSummary {
   parseError?: string;
 }
 
+/**
+ * A note you inject between rounds — a correction, a new angle, a source the panel missed.
+ *
+ * Ten rounds of cross-examination narrows relentlessly: each round stress-tests the positions
+ * already on the table rather than widening the field. Steering is the only way to introduce
+ * something the models did not think of themselves.
+ */
+export interface Steer {
+  /** The round this note was delivered into. */
+  round: number;
+  text: string;
+  at: string;
+}
+
 export interface FinalSummary {
   text: string;
   /** Why the run ended, so the reader knows whether the panel finished or was cut off. */
@@ -250,6 +264,12 @@ export interface RunState {
   records: TurnRecord[];
   /** The narrator's closing account, requested however the run ended. */
   finalSummary: FinalSummary | null;
+  /** Notes already delivered, shown in the timeline so interventions are visible. */
+  steers: Steer[];
+  /** Queued note, delivered at the start of the next round. */
+  pendingSteer: string | null;
+  /** True while the run is holding at a round boundary waiting for you. */
+  awaitingSteer: boolean;
   startedAt: string | null;
   finishedAt: string | null;
 }
@@ -309,5 +329,8 @@ export type BgMessage =
   | { type: 'STOP_RUN' }
   | { type: 'MARK_CONVERGED' }
   | { type: 'RESET_RUN' }
+  | { type: 'QUEUE_STEER'; text: string }
+  | { type: 'PAUSE_AFTER_ROUND' }
+  | { type: 'RESUME_RUN' }
   | { type: 'CHECK_ADAPTERS' }
   | { type: 'DIAGNOSE_TAB'; tabId: number };

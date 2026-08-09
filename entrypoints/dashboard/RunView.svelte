@@ -4,6 +4,7 @@
   import ConvergenceRail from './ConvergenceRail.svelte';
   import FinalSummary from './FinalSummary.svelte';
   import NarratorCard from './NarratorCard.svelte';
+  import Steer from './Steer.svelte';
 
   let { run }: { run: RunState } = $props();
 
@@ -52,6 +53,10 @@
   </aside>
 
   <main>
+    {#if run.status === 'running' || run.status === 'paused'}
+      <Steer {run} />
+    {/if}
+
     {#if run.finalSummary}
       <FinalSummary summary={run.finalSummary} {run} />
     {/if}
@@ -69,6 +74,12 @@
           <span class="rule"></span>
           <span class="data count">{turns.length} of {run.seats.filter((s) => s.role === 'participant').length} replied</span>
         </header>
+
+        {#each run.steers.filter((s) => s.round === r) as s, i (i)}
+          <!-- Shown where it landed, so a shift in the discussion is traceable to you
+               rather than looking like the panel changed its mind unprompted. -->
+          <p class="steer"><span class="tag">Your note</span>{s.text}</p>
+        {/each}
 
         {#if summary}
           <NarratorCard {summary} {run} />
@@ -153,6 +164,16 @@
   .body { white-space: pre-wrap; font-size: 13px; color: var(--ink-dim); margin: 8px 0 0; }
 
   .pending, .waiting { color: var(--ink-faint); }
+
+  .steer {
+    margin: 0 0 10px; padding: 9px 12px; font-size: 13px;
+    background: var(--panel); border: 1px solid var(--rule);
+    border-left: 2px solid var(--open); border-radius: var(--r);
+  }
+  .tag {
+    margin-right: 8px; color: var(--open);
+    font: 600 10px var(--font-label); letter-spacing: .1em; text-transform: uppercase;
+  }
 
   .log { border-top: 1px solid var(--rule); padding-top: 12px; }
   .log summary { cursor: pointer; color: var(--ink-dim); font: 600 11px var(--font-label); letter-spacing: .12em; text-transform: uppercase; }

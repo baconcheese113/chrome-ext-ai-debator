@@ -85,6 +85,52 @@ export function markConverged(): void {
   manualConverge = true;
 }
 
+/** Hold at the next round boundary so there is time to read and compose a note. */
+export function pauseAfterRound(): void {
+  pauseRequested = true;
+}
+
+export function resumeRun(): void {
+  pauseRequested = false;
+  resumeResolver?.();
+  resumeResolver = undefined;
+}
+
+let pauseRequested = false;
+let resumeResolver: (() => void) | undefined;
+
+/**
+ * Take the queued note, if any, and record it against this round.
+ *
+ * Consumed at the round boundary rather than applied mid-round, so every participant in a
+ * round sees the same instructions — otherwise models seated later would be answering a
+ * different question from the ones seated first.
+ */
+async function takeSteer(round: number): Promise<string | undefined> {
+  const run = await getRun();
+  const text = run.pendingSteer?.trim();
+  if (!text) return undefined;
+
+  await setRun({
+    ...run,
+    pendingSteer: null,
+    steers: [...run.steers, { round, text, at: new Date().toISOString() }],
+  });
+  await appendLog('info', `Your note goes to every model this round: "${text.slice(0, 80)}"`);
+  return text;
+}
+
+/** Hold the run at a boundary until Resume, so a note can be composed unhurried. */
+async function holdForSteer(): Promise<void> {
+  if (!pauseRequested || stopRequested) return;
+  await patchRun({ awaitingSteer: true });
+  await appendLog('info', 'Paused. Add a note for the next round, then resume.');
+  await new Promise<void>((resolve) => {
+    resumeResolver = resolve;
+  });
+  await patchRun({ awaitingSteer: false });
+}
+
 let running = false;
 
 export const isRunning = () => running;
@@ -99,6 +145,8 @@ export async function startRun(
   running = true;
   stopRequested = false;
   manualConverge = false;
+  pauseRequested = false;
+  resumeResolver = undefined;
 
   const seats: Seat[] = seatSpecs.map((s) => ({ ...s, status: 'idle' }));
   await setRun({
@@ -113,6 +161,9 @@ export async function startRun(
     log: [],
     records: [],
     finalSummary: null,
+    steers: [],
+    pendingSteer: null,
+    awaitingSteer: false,
     startedAt: new Date().toISOString(),
     finishedAt: null,
   });
@@ -183,6 +234,8 @@ async function runLoop(): Promise<void> {
     // Reached only if no break fires — i.e. we exhaust the loop.
     endReason = 'max-rounds';
 
+    const steer = await takeSteer(round);
+
     // Every participant is prompted with all other participants' latest turns, then they all
     // generate at once. That simultaneity is what makes this a panel rather than a relay.
     const prompts = new Map<string, string>();
@@ -194,8 +247,9 @@ async function runLoop(): Promise<void> {
               run.config,
               seat.displayName,
               active.filter((s) => s.seatId !== seat.seatId).map((s) => s.displayName),
+              steer,
             )
-          : participantRound(run.config, round, previousTurns(run, round - 1, seat.seatId)),
+          : participantRound(run.config, round, previousTurns(run, round - 1, seat.seatId), steer),
       );
     }
 
@@ -217,7 +271,12 @@ async function runLoop(): Promise<void> {
     const n = narrator();
     let summary = undefined;
     if (n && roundTurns.length) {
-      const narrated = await sendTo(n, narratorRound(round, roundTurns), MIN_NARRATOR_CHARS, round);
+      const narrated = await sendTo(
+        n,
+        narratorRound(round, roundTurns, steer),
+        MIN_NARRATOR_CHARS,
+        round,
+      );
       run = await getRun();
       if (narrated === 'aborted') break;
       if (narrated === 'ok') {
@@ -252,6 +311,10 @@ async function runLoop(): Promise<void> {
       endReason = 'stopped';
       break;
     }
+
+    // Hold here if asked, so a note can be composed after reading the round summary.
+    await holdForSteer();
+    if (stopRequested) { endReason = 'stopped'; break; }
 
     // Jittered gap before the next round. These are subscription UIs with real rate limits,
     // and a perfectly regular cadence is both harder on them and more obviously automated.

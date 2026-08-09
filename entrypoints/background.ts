@@ -2,12 +2,14 @@ import { ADAPTERS, ADAPTERS_BY_ID, adapterForUrl } from '../lib/adapters';
 import type { AdapterCheck } from '../lib/selector-check';
 import {
   markConverged,
+  pauseAfterRound,
+  resumeRun,
   reconcileOrphanedRun,
   requestStop,
   resolveIncident,
   startRun,
 } from '../lib/orchestrator';
-import { EMPTY_RUN, getRun, setRun } from '../lib/store';
+import { EMPTY_RUN, getRun, patchRun, setRun } from '../lib/store';
 import type { BgMessage, CandidateTab } from '../lib/types';
 
 export default defineBackground(() => {
@@ -47,6 +49,24 @@ export default defineBackground(() => {
       case 'RESET_RUN':
         void setRun(EMPTY_RUN).then(() => sendResponse({ ok: true }));
         return true;
+
+      case 'QUEUE_STEER':
+        // Stored rather than delivered now: the round loop consumes it at the next boundary
+        // so every participant in a round gets the same instructions.
+        void patchRun({ pendingSteer: msg.text.trim() || null }).then(() =>
+          sendResponse({ ok: true }),
+        );
+        return true;
+
+      case 'PAUSE_AFTER_ROUND':
+        pauseAfterRound();
+        sendResponse({ ok: true });
+        return false;
+
+      case 'RESUME_RUN':
+        resumeRun();
+        sendResponse({ ok: true });
+        return false;
 
       case 'CHECK_ADAPTERS':
         void checkAllTabs().then(sendResponse);

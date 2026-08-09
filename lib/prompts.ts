@@ -16,8 +16,10 @@ export function participantSeed(
   config: RunConfig,
   selfName: string,
   otherNames: string[],
+  steer?: string,
 ): string {
   return [
+    ...(steer ? [steerBlock(steer), ''] : []),
     `You are "${selfName}", one of ${otherNames.length + 1} participants in a collaborative brainstorming panel.`,
     `The other participants are: ${otherNames.join(', ')}.`,
     '',
@@ -44,16 +46,37 @@ export function participantSeed(
   ].join('\n');
 }
 
+/**
+ * A note from the human running the panel.
+ *
+ * Framed as an instruction from the moderator rather than another participant's opinion —
+ * models otherwise treat it as one more view to weigh and politely set aside, which defeats
+ * the point of intervening.
+ */
+export function steerBlock(text: string): string {
+  return [
+    '=== NOTE FROM THE MODERATOR (the human running this panel) ===',
+    text.trim(),
+    '',
+    'This is a direction, not another participant\'s opinion. Address it directly in this',
+    'round, before anything else. If it corrects you, say so plainly rather than defending',
+    'your earlier position.',
+    '=== END NOTE ===',
+  ].join('\n');
+}
+
 export function participantRound(
   config: RunConfig,
   round: number,
   others: Turn[],
+  steer?: string,
 ): string {
   const blocks = others
     .map((t) => `--- ${t.displayName} said ---\n${t.text.trim()}`)
     .join('\n\n');
 
   return [
+    ...(steer ? [steerBlock(steer), ''] : []),
     `ROUND ${round}. Here is what the other participants said in round ${round - 1}:`,
     '',
     blocks,
@@ -107,11 +130,20 @@ export function narratorSeed(config: RunConfig, participantNames: string[]): str
   ].join('\n');
 }
 
-export function narratorRound(round: number, turns: Turn[]): string {
+export function narratorRound(round: number, turns: Turn[], steer?: string): string {
   const blocks = turns
     .map((t) => `--- ${t.displayName} ---\n${t.text.trim()}`)
     .join('\n\n');
-  return [`ROUND ${round} RESPONSES:`, '', blocks, '', 'Reply with the json block only.'].join('\n');
+  return [
+    // The narrator needs to know an intervention happened, or its summary will read as if
+    // the panel spontaneously changed direction.
+    ...(steer ? ['The moderator interjected before this round:', steer.trim(), ''] : []),
+    `ROUND ${round} RESPONSES:`,
+    '',
+    blocks,
+    '',
+    'Reply with the json block only.',
+  ].join('\n');
 }
 
 export type EndReason = 'converged' | 'max-rounds' | 'stopped' | 'too-few-participants' | 'error';
