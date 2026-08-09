@@ -102,6 +102,66 @@ export function narratorRound(round: number, turns: Turn[]): string {
   return [`ROUND ${round} RESPONSES:`, '', blocks, '', 'Reply with the json block only.'].join('\n');
 }
 
+export type EndReason = 'converged' | 'max-rounds' | 'stopped' | 'too-few-participants' | 'error';
+
+const END_REASON_TEXT: Record<EndReason, string> = {
+  converged: 'The panel converged — participants agreed there was nothing further to add.',
+  'max-rounds': 'The panel hit its round limit. It may or may not have finished its thinking.',
+  stopped: 'I stopped the panel early.',
+  'too-few-participants': 'Too many models dropped out to continue.',
+  error: 'The run ended with an error.',
+};
+
+/**
+ * Closing summary, requested however the run ended.
+ *
+ * A panel that produces ten rounds of argument and then simply halts has wasted most of its
+ * value: the transcript is long, per-round summaries are fragmented, and the reader has to
+ * assemble the story themselves. This asks for the story.
+ *
+ * It deliberately overrides the JSON contract from the seed — this one is for a person.
+ */
+export function finalSummaryPrompt(
+  config: RunConfig,
+  endReason: EndReason,
+  roundsCompleted: number,
+  participantNames: string[],
+): string {
+  return [
+    'The panel has finished. Ignore the JSON format for this final message only — reply in',
+    'plain prose, for a person to read.',
+    '',
+    `WHY IT ENDED: ${END_REASON_TEXT[endReason]}`,
+    `ROUNDS COMPLETED: ${roundsCompleted}`,
+    `PARTICIPANTS: ${participantNames.join(', ')}`,
+    `TOPIC: ${config.topic}`,
+    '',
+    'Write a closing account of what actually happened, covering:',
+    '',
+    '1. What the question really was, and what makes it hard.',
+    '2. The main positions that emerged, in plain language. Explain any named theory, term,',
+    '   or thinker you mention — assume the reader is intelligent but new to this subject.',
+    '3. What genuinely CHANGED across the rounds. What got refined, retracted, or defeated,',
+    '   and who moved. Do not just list what each model said.',
+    '4. The real disagreements that remain, and why they were not settled.',
+    '5. The honest takeaway. If the panel did not reach an answer, say so plainly and explain',
+    '   what was learned instead — that is often the more useful result.',
+    '',
+    'ATTRIBUTION MATTERS MOST',
+    `Name who did what, every time. Use their exact names — ${participantNames.join(', ')} —`,
+    'for each idea introduced, each objection raised, each concession made, and each position',
+    'abandoned. "The panel considered X" is useless; "Grok proposed X, and Kimi showed it',
+    'assumed its own conclusion" is the point. Without names, the reader cannot tell whether',
+    'an idea survived scrutiny or was simply never challenged.',
+    '',
+    'Be concrete and specific to this discussion; a summary that could describe any debate is',
+    'worthless. Do not flatter the panel. If a line of argument went nowhere, say that.',
+    '',
+    'Use short paragraphs, and **bold** for the occasional key term. Headings with ## are',
+    'welcome. Do not create an artifact, canvas, or document.',
+  ].join('\n');
+}
+
 /** Reads the participant's self-reported convergence footer. Null when absent/unparseable. */
 export function parseConverged(text: string): boolean | null {
   const matches = Array.from(text.matchAll(CONVERGED_RE));

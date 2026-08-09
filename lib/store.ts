@@ -20,6 +20,7 @@ export const EMPTY_RUN: RunState = {
   incident: null,
   log: [],
   records: [],
+  finalSummary: null,
   startedAt: null,
   finishedAt: null,
 };

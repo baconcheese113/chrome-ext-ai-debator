@@ -2,6 +2,7 @@
   import { channelColor, seatStatusLabel } from '../../lib/channels';
   import type { RunState } from '../../lib/types';
   import ConvergenceRail from './ConvergenceRail.svelte';
+  import FinalSummary from './FinalSummary.svelte';
   import NarratorCard from './NarratorCard.svelte';
 
   let { run }: { run: RunState } = $props();
@@ -51,6 +52,10 @@
   </aside>
 
   <main>
+    {#if run.finalSummary}
+      <FinalSummary summary={run.finalSummary} {run} />
+    {/if}
+
     {#if !rounds.length}
       <p class="waiting">Seeding the panel. The first round appears once every model replies.</p>
     {/if}

@@ -150,6 +150,16 @@ export interface RoundSummary {
   parseError?: string;
 }
 
+export interface FinalSummary {
+  text: string;
+  /** Why the run ended, so the reader knows whether the panel finished or was cut off. */
+  endReason: string;
+  roundsCompleted: number;
+  at: string;
+  /** Set when no summary could be produced, explaining why rather than showing nothing. */
+  unavailable?: string;
+}
+
 export type ConvergenceStrategy = 'self-report' | 'moderator' | 'manual';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'done' | 'aborted' | 'error';
@@ -236,6 +246,8 @@ export interface RunState {
   log: LogEntry[];
   /** Flight recorder. Bounded, and exportable as a single file for diagnosis. */
   records: TurnRecord[];
+  /** The narrator's closing account, requested however the run ended. */
+  finalSummary: FinalSummary | null;
   startedAt: string | null;
   finishedAt: string | null;
 }

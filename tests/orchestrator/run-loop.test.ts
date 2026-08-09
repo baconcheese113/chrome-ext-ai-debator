@@ -395,6 +395,82 @@ describe('turn modes', () => {
   });
 });
 
+describe('closing summary', () => {
+  const LONG = ok('## What happened\n\n' + 'A real closing account. '.repeat(30));
+
+  it('is requested when the panel converges', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha', 'yes')] }],
+        [2, { results: [reply('beta', 'yes')] }],
+        [9, { results: [ok('READY'), NARRATOR_JSON, LONG] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 5 }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(9, 'N', 'narrator'),
+    ]);
+
+    const run = getRunState();
+    expect(run.finalSummary?.endReason).toBe('converged');
+    expect(run.finalSummary?.text).toContain('What happened');
+    expect(run.finalSummary?.roundsCompleted).toBe(1);
+  });
+
+  it('is requested when the round limit is reached, not only on convergence', async () => {
+    // The case that prompted this: ten rounds of work, then the run just stopped.
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+        [9, { results: [ok('READY'), NARRATOR_JSON, NARRATOR_JSON, LONG] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 2 }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(9, 'N', 'narrator'),
+    ]);
+
+    expect(getRunState().finalSummary?.endReason).toBe('max-rounds');
+    expect(getRunState().finalSummary?.text.length).toBeGreaterThan(300);
+  });
+
+  it('does not leave the summary sitting in the transcript as a round turn', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha', 'yes')] }],
+        [2, { results: [reply('beta', 'yes')] }],
+        [9, { results: [ok('READY'), NARRATOR_JSON, LONG] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 5 }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(9, 'N', 'narrator'),
+    ]);
+
+    expect(getRunState().turns.some((t) => t.text.includes('What happened'))).toBe(false);
+  });
+
+  it('explains its absence rather than showing nothing when there is no narrator', async () => {
+    setup(
+      new Map([
+        [1, { results: [reply('alpha', 'yes')] }],
+        [2, { results: [reply('beta', 'yes')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 5 }, [seat(1, 'A'), seat(2, 'B')]);
+
+    expect(getRunState().finalSummary?.unavailable).toContain('No narrator');
+  });
+});
+
 describe('flight recorder', () => {
   it('records every attempt, with diagnostics on failures only', async () => {
     setup(

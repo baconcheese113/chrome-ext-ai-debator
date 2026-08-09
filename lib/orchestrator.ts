@@ -1,11 +1,13 @@
 import { evaluateConvergence, parseNarratorSummary } from './convergence';
 import {
   narratorRound,
+  finalSummaryPrompt,
   narratorSeed,
   parseConverged,
   participantRound,
   participantSeed,
   stripConverged,
+  type EndReason,
 } from './prompts';
 import { appendLog, appendRecord, getRun, patchRun, setRun } from './store';
 import type {
@@ -28,6 +30,8 @@ const MIN_NARRATOR_CHARS = 40;
  * floor rejected a correct answer as truncated and dropped the narrator on every single run.
  */
 const MIN_ACK_CHARS = 3;
+/** A closing account is long by nature; anything shorter is a refusal or a stub. */
+const MIN_SUMMARY_CHARS = 300;
 
 /**
  * Deliberate delays, isolated so tests can zero them. Without this, orchestrator tests spend
@@ -108,6 +112,7 @@ export async function startRun(
     incident: null,
     log: [],
     records: [],
+    finalSummary: null,
     startedAt: new Date().toISOString(),
     finishedAt: null,
   });
@@ -137,6 +142,7 @@ export async function startRun(
 }
 
 async function runLoop(): Promise<void> {
+  let endReason: EndReason = 'max-rounds';
   let run = await getRun();
   const participants = () => run.seats.filter((s) => s.role === 'participant' && s.status !== 'dropped');
   const narrator = () => run.seats.find((s) => s.role === 'narrator' && s.status !== 'dropped');
@@ -171,8 +177,11 @@ async function runLoop(): Promise<void> {
     const active = participants();
     if (active.length < 2) {
       await appendLog('warn', 'Fewer than two participants remain. Ending run.');
+      endReason = 'too-few-participants';
       break;
     }
+    // Reached only if no break fires — i.e. we exhaust the loop.
+    endReason = 'max-rounds';
 
     // Every participant is prompted with all other participants' latest turns, then they all
     // generate at once. That simultaneity is what makes this a panel rather than a relay.
@@ -235,19 +244,98 @@ async function runLoop(): Promise<void> {
       summary,
     );
     await appendLog('info', `Convergence (${run.config.convergence}): ${verdict.reason}`);
-    if (verdict.converged) break;
-    if (stopRequested) break;
+    if (verdict.converged) {
+      endReason = 'converged';
+      break;
+    }
+    if (stopRequested) {
+      endReason = 'stopped';
+      break;
+    }
 
     // Jittered gap before the next round. These are subscription UIs with real rate limits,
     // and a perfectly regular cadence is both harder on them and more obviously automated.
     await sleep(timings.roundPauseMs + Math.random() * timings.roundPauseJitterMs);
   }
 
+  if (stopRequested) endReason = 'stopped';
+  await writeFinalSummary(endReason);
+
   await patchRun({
     status: stopRequested ? 'aborted' : 'done',
     finishedAt: new Date().toISOString(),
   });
   await appendLog('info', 'Run finished.');
+}
+
+/**
+ * Ask the narrator for a closing account, however the run ended.
+ *
+ * Ten rounds of argument that simply halt leave the reader to assemble the story from a long
+ * transcript and a pile of per-round summaries. This is the payoff for the whole run, so it
+ * is requested on every ending — converged, stopped, or out of rounds — not just the tidy one.
+ */
+async function writeFinalSummary(endReason: EndReason): Promise<void> {
+  const run = await getRun();
+  // Participant turns from round 1 onward. The narrator's seed acknowledgement is recorded
+  // as a round-0 turn, and counting it reported one round more than actually happened.
+  const participantIds = new Set(
+    run.seats.filter((s) => s.role === 'participant').map((s) => s.seatId),
+  );
+  const roundsCompleted = new Set(
+    run.turns.filter((t) => t.round > 0 && participantIds.has(t.seatId)).map((t) => t.round),
+  ).size;
+  const base = { endReason, roundsCompleted, at: new Date().toISOString() };
+
+  const narrator = run.seats.find((s) => s.role === 'narrator' && s.status !== 'dropped');
+  if (!narrator) {
+    await patchRun({
+      finalSummary: {
+        ...base,
+        text: '',
+        unavailable:
+          'No narrator was available to write one. Seat a narrator to get a closing summary.',
+      },
+    });
+    return;
+  }
+  if (run.turns.length === 0) {
+    await patchRun({
+      finalSummary: { ...base, text: '', unavailable: 'The panel produced no turns to summarise.' },
+    });
+    return;
+  }
+
+  await appendLog('info', 'Asking the narrator for a closing summary…');
+  const names = run.seats.filter((s) => s.role === 'participant').map((s) => s.displayName);
+
+  // A stop request must not prevent the summary — the user still wants to know what happened.
+  const wasStopped = stopRequested;
+  stopRequested = false;
+  const outcome = await sendTo(
+    narrator,
+    finalSummaryPrompt(run.config, endReason, roundsCompleted, names),
+    MIN_SUMMARY_CHARS,
+    run.round,
+  );
+  stopRequested = wasStopped;
+
+  const after = await getRun();
+  if (outcome !== 'ok') {
+    await patchRun({
+      finalSummary: { ...base, text: '', unavailable: 'The narrator could not produce one.' },
+    });
+    return;
+  }
+
+  // The summary arrives as an ordinary turn from the narrator; lift it out and drop the turn
+  // so it does not appear as a round contribution.
+  const turn = after.turns[after.turns.length - 1];
+  await setRun({
+    ...after,
+    turns: after.turns.slice(0, -1),
+    finalSummary: { ...base, text: turn?.text ?? '' },
+  });
 }
 
 type RoundResult = Array<{ seat: Seat; ok: boolean }>;
