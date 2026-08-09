@@ -22,6 +22,11 @@ export interface FakeChrome {
   storage: { local: Record<string, unknown> };
   /** Every prompt sent to each tab, so tests can assert what a model was shown. */
   prompts: Map<number, string[]>;
+  /**
+   * The minChars floor sent with each DRIVE. The driver enforces it in the page, so this is
+   * the only place an orchestrator test can verify the floor it chose was sane.
+   */
+  minChars: Map<number, number[]>;
   windowUpdates: Array<{ windowId: number; state?: string }>;
   injections: number[];
   install(): void;
@@ -39,6 +44,7 @@ export function fail(failure: DriveResult['failure'], detail = 'scripted failure
 export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
   const storage: Record<string, unknown> = {};
   const prompts = new Map<number, string[]>();
+  const minChars = new Map<number, number[]>();
   const windowUpdates: Array<{ windowId: number; state?: string }> = [];
   const injections: number[] = [];
   const cursors = new Map<number, number>();
@@ -74,7 +80,7 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
         if (scripts.get(tabId)?.gone) throw new Error('No tab with id');
         return { id: tabId, windowId: 100 + tabId, active: true };
       },
-      async sendMessage(tabId: number, msg: { type: string; prompt?: string }) {
+      async sendMessage(tabId: number, msg: { type: string; prompt?: string; minChars?: number }) {
         const script = scripts.get(tabId);
         if (script?.gone) throw new Error('Could not establish connection. Receiving end does not exist.');
         if (msg.type === 'PING') {
@@ -85,6 +91,9 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
           const list = prompts.get(tabId) ?? [];
           list.push(msg.prompt ?? '');
           prompts.set(tabId, list);
+          const floors = minChars.get(tabId) ?? [];
+          floors.push(msg.minChars ?? -1);
+          minChars.set(tabId, floors);
           return nextResult(tabId);
         }
         return undefined;
@@ -133,6 +142,7 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
   return {
     storage: { local: storage },
     prompts,
+    minChars,
     windowUpdates,
     injections,
     install() {

@@ -29,7 +29,6 @@ const CONFIG: RunConfig = {
   convergence: 'self-report',
   autoDrop: false,
   wordBudget: 100,
-  isolateWindows: true,
 };
 
 const seat = (tabId: number, name: string, role: Seat['role'] = 'participant') => ({
@@ -249,6 +248,37 @@ describe('narrator', () => {
     expect(run.summaries[0]!.agreements).toEqual(['a']);
   });
 
+  it('REGRESSION: accepts the one-word READY acknowledgement from the seed', async () => {
+    // The narrator seed asks for exactly "READY", then the reply was validated against the
+    // 40-char summary floor and rejected as truncated. The narrator was dropped on every
+    // single run, and the failure read as a Claude problem rather than as our own.
+    setup(
+      new Map([
+        [1, { results: [reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+        [9, { results: [ok('READY'), NARRATOR_JSON] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    await orch.startRun({ ...CONFIG, maxRounds: 1 }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+      seat(9, 'N', 'narrator'),
+    ]);
+
+    // The floor sent with the seed is the thing under test. The driver enforces it inside
+    // the page, so asserting on the surviving narrator alone would pass against broken code —
+    // the fake returns scripted results and never validates anything.
+    const [seedFloor, summaryFloor] = fake.minChars.get(9)!;
+    expect(seedFloor).toBeLessThanOrEqual('READY'.length);
+    expect(summaryFloor).toBeGreaterThan(seedFloor!);
+
+    const run = getRunState();
+    expect(run.seats.find((s) => s.tabId === 9)!.status).not.toBe('dropped');
+    expect(run.summaries).toHaveLength(1);
+    expect(run.incident).toBeNull();
+  });
+
   it('REGRESSION: dropping the narrator does not end the panel', async () => {
     // This exact sequence left the console stuck on "Running / Round 0" with every
     // participant on standby, because sendTo returned a bare false for both "seat dropped"
@@ -297,6 +327,39 @@ describe('narrator', () => {
     expect(run.config.convergence).toBe('self-report');
     expect(run.round).toBe(1);
     expect(run.status).toBe('done');
+  });
+});
+
+describe('flight recorder', () => {
+  it('records every attempt, with diagnostics on failures only', async () => {
+    setup(
+      new Map([
+        [1, { results: [fail('extract-empty', 'nothing there'), reply('recovered')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const running = orch.startRun({ ...CONFIG, maxRounds: 1 }, [seat(1, 'A'), seat(2, 'B')]);
+    await answerIncident(orch, 'retry');
+    await running;
+
+    const records = getRunState().records;
+    // Two attempts for seat A (fail then success), one for seat B.
+    expect(records).toHaveLength(3);
+
+    const failed = records.find((r) => r.outcome === 'failed')!;
+    expect(failed.failure).toBe('extract-empty');
+    expect(failed.detail).toBe('nothing there');
+    expect(failed.attempt).toBe(1);
+    expect(failed.promptChars).toBeGreaterThan(0);
+
+    const succeeded = records.find((r) => r.outcome === 'ok' && r.seatId === 'seat-1')!;
+    expect(succeeded.attempt).toBe(2);
+    expect(succeeded.extractedChars).toBeGreaterThan(0);
+    expect(succeeded.extractedHead).toContain('recovered');
+    expect(succeeded.convergedVote).toBe(false);
+    // Diagnostics are page markup; carrying them for successes would bloat every export.
+    expect(succeeded.diagnostics).toBeUndefined();
   });
 });
 

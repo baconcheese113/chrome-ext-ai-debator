@@ -168,6 +168,37 @@ export interface LogEntry {
   message: string;
 }
 
+/**
+ * One recorded attempt to drive a seat — the flight recorder.
+ *
+ * The dashboard's activity log is a human summary and loses everything that matters for
+ * diagnosis: which selector matched, how long each phase took, what was actually extracted,
+ * and what the page looked like when it failed. Every defect in this project so far was
+ * diagnosed from a screenshot plus guesswork; this exists so the next one is diagnosed from
+ * the recording.
+ */
+export interface TurnRecord {
+  at: string;
+  round: number;
+  seatId: string;
+  displayName: string;
+  providerId: string;
+  attempt: number;
+  outcome: 'ok' | 'failed';
+  failure?: string;
+  detail?: string;
+  timings: Record<string, number>;
+  /** Trimmed: enough to see what was asked without carrying whole transcripts. */
+  promptChars: number;
+  promptHead: string;
+  extractedChars?: number;
+  extractedVia?: TurnExtraction['via'];
+  extractedHead?: string;
+  convergedVote?: boolean | null;
+  /** Present on failure only. Contains page markup — never leaves the machine unbidden. */
+  diagnostics?: Diagnostics;
+}
+
 export interface RunConfig {
   topic: string;
   maxRounds: number;
@@ -176,14 +207,6 @@ export interface RunConfig {
   autoDrop: boolean;
   /** Per-response word budget written into the panel rules. */
   wordBudget: number;
-  /**
-   * Move each seat into its own window at run start.
-   *
-   * Chrome does not render background tabs and throttles their timers to once a second,
-   * then once a minute after five minutes hidden. Seats sharing a window therefore stall.
-   * A tab that is the active tab of an unfocused window keeps rendering normally.
-   */
-  isolateWindows: boolean;
 }
 
 export interface RunState {
@@ -196,6 +219,8 @@ export interface RunState {
   summaries: RoundSummary[];
   incident: Incident | null;
   log: LogEntry[];
+  /** Flight recorder. Bounded, and exportable as a single file for diagnosis. */
+  records: TurnRecord[];
   startedAt: string | null;
   finishedAt: string | null;
 }

@@ -1,4 +1,4 @@
-import type { LogEntry, RunState } from './types';
+import type { LogEntry, RunState, TurnRecord } from './types';
 
 const KEY = 'runState';
 
@@ -10,7 +10,6 @@ export const EMPTY_RUN: RunState = {
     convergence: 'self-report',
     autoDrop: false,
     wordBudget: 400,
-    isolateWindows: true,
   },
   status: 'idle',
   round: 0,
@@ -19,6 +18,7 @@ export const EMPTY_RUN: RunState = {
   summaries: [],
   incident: null,
   log: [],
+  records: [],
   startedAt: null,
   finishedAt: null,
 };
@@ -36,6 +36,14 @@ export async function patchRun(patch: Partial<RunState>): Promise<RunState> {
   const next = { ...(await getRun()), ...patch };
   await setRun(next);
   return next;
+}
+
+/** Bounded so a long run cannot grow storage without limit. */
+const MAX_RECORDS = 200;
+
+export async function appendRecord(record: TurnRecord): Promise<void> {
+  const run = await getRun();
+  await setRun({ ...run, records: [...(run.records ?? []), record].slice(-MAX_RECORDS) });
 }
 
 export async function appendLog(

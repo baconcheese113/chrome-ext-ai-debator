@@ -7,7 +7,7 @@ import {
   participantSeed,
   stripConverged,
 } from './prompts';
-import { appendLog, getRun, patchRun, setRun } from './store';
+import { appendLog, appendRecord, getRun, patchRun, setRun } from './store';
 import type {
   Diagnostics,
   DriveResult,
@@ -23,6 +23,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** Minimum plausible reply length. Below this we assume truncation, not brevity. */
 const MIN_REPLY_CHARS = 120;
 const MIN_NARRATOR_CHARS = 40;
+/**
+ * The narrator seed asks for the single word "READY". Validating that against the summary
+ * floor rejected a correct answer as truncated and dropped the narrator on every single run.
+ */
+const MIN_ACK_CHARS = 3;
 
 /**
  * Deliberate delays, isolated so tests can zero them. Without this, orchestrator tests spend
@@ -102,6 +107,7 @@ export async function startRun(
     summaries: [],
     incident: null,
     log: [],
+    records: [],
     startedAt: new Date().toISOString(),
     finishedAt: null,
   });
@@ -135,15 +141,13 @@ async function runLoop(): Promise<void> {
   const participants = () => run.seats.filter((s) => s.role === 'participant' && s.status !== 'dropped');
   const narrator = () => run.seats.find((s) => s.role === 'narrator' && s.status !== 'dropped');
 
-  if (run.config.isolateWindows) await isolateSeatWindows(run.seats);
-
   // --- seeding ------------------------------------------------------------
   await appendLog('info', `Seeding ${participants().length} participants.`);
   const names = participants().map((s) => s.displayName);
 
   const nar = narrator();
   if (nar) {
-    const seeded = await sendTo(nar, narratorSeed(run.config, names), MIN_NARRATOR_CHARS, 0);
+    const seeded = await sendTo(nar, narratorSeed(run.config, names), MIN_ACK_CHARS, 0);
     if (seeded === 'aborted') return;
     // The narrator is an observer. Losing it costs us round summaries, not the panel —
     // ending the run here would throw away every participant the user set up.
@@ -186,13 +190,17 @@ async function runLoop(): Promise<void> {
       );
     }
 
-    const results = await Promise.all(
-      active.map(async (seat, i) => {
-        await sleep(i * timings.sendStaggerMs);
-        const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
-        return { seat, ok: outcome === 'ok' };
-      }),
-    );
+    // Sequential, not parallel. Chrome renders only the active tab of a window, so a seat
+    // has to be fronted to be driven reliably — and only one tab can be active at a time.
+    // The panel is still simultaneous in the sense that matters: every participant answers
+    // the same round and sees every other participant's previous turn.
+    const results: Array<{ seat: Seat; ok: boolean }> = [];
+    for (const seat of active) {
+      if (stopRequested) break;
+      const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
+      results.push({ seat, ok: outcome === 'ok' });
+      await sleep(timings.sendStaggerMs);
+    }
 
     if (stopRequested) break;
     run = await getRun();
@@ -273,10 +281,18 @@ async function sendTo(
   minChars: number,
   round: number,
 ): Promise<SendOutcome> {
+  let attempt = 0;
   for (;;) {
+    attempt++;
     if (stopRequested) return 'aborted';
 
     await updateSeat(seat.seatId, { status: 'sending' });
+
+    try {
+      await focusSeatTab(seat);
+    } catch {
+      // guardWindow reports the tab being gone with a better message; fall through to it.
+    }
 
     const guard = await guardWindow(seat);
     if (guard) {
@@ -312,6 +328,8 @@ async function sendTo(
       continue;
     }
 
+    await recordAttempt(seat, round, attempt, prompt, result);
+
     if (result?.ok && result.extraction) {
       const text = result.extraction.text;
       const turn: Turn = {
@@ -346,38 +364,53 @@ async function sendTo(
 }
 
 /**
- * Give every seat its own window, so each is the active tab of a window and keeps rendering.
+ * Record every attempt, successful or not.
  *
- * Chrome does not lay out background tabs and throttles their timers — to once a second, and
- * to once a minute after five minutes hidden. Seats sharing one window therefore appear to
- * generate forever and then fail. The spike measured that an unfocused *window* returns full
- * responses, so the fix is one tab per window, never minimized.
- *
- * The tab keeps its id and its conversation; only its window changes.
+ * Diagnosis so far has meant reading a screenshot of a truncated activity log and guessing.
+ * This captures what the log cannot: the selector that matched, per-phase timings, what was
+ * actually extracted, and the page's candidate selectors at the moment of failure.
  */
-async function isolateSeatWindows(seats: Seat[]): Promise<void> {
-  let moved = 0;
-  for (const seat of seats) {
-    try {
-      const tab = await chrome.tabs.get(seat.tabId);
-      const siblings = await chrome.tabs.query({ windowId: tab.windowId });
-      if (siblings.length > 1) {
-        await chrome.windows.create({ tabId: seat.tabId, focused: false, state: 'normal' });
-        moved++;
-      } else if (!tab.active) {
-        await chrome.tabs.update(seat.tabId, { active: true });
-      }
-    } catch (err) {
-      await appendLog('warn', `Could not give ${seat.displayName} its own window: ${String(err)}`);
-    }
-  }
-  if (moved > 0) {
-    await appendLog(
-      'info',
-      `Moved ${moved} tab(s) into separate windows. Chrome stops rendering background tabs, ` +
-        'so seats sharing a window stall. Leave the windows open and unminimized.',
-    );
-  }
+async function recordAttempt(
+  seat: Seat,
+  round: number,
+  attempt: number,
+  prompt: string,
+  result: DriveResult | undefined,
+): Promise<void> {
+  await appendRecord({
+    at: new Date().toISOString(),
+    round,
+    seatId: seat.seatId,
+    displayName: seat.displayName,
+    providerId: seat.providerId,
+    attempt,
+    outcome: result?.ok ? 'ok' : 'failed',
+    failure: result?.failure,
+    detail: result?.detail,
+    timings: result?.timings ?? {},
+    promptChars: prompt.length,
+    promptHead: prompt.slice(0, 400),
+    extractedChars: result?.extraction?.text.length,
+    extractedVia: result?.extraction?.via,
+    extractedHead: result?.extraction?.text.slice(0, 400),
+    convergedVote: result?.extraction ? parseConverged(result.extraction.text) : undefined,
+    diagnostics: result?.ok ? undefined : result?.diagnostics,
+  });
+}
+
+/**
+ * Bring a seat's tab to the front of its own window before driving it.
+ *
+ * Chrome only renders the active tab of a window, and throttles background-tab timers to
+ * once a second — then once a minute after five minutes hidden. Rather than scatter seats
+ * across windows (unmanageable), each seat is simply made active for its turn. Tabs stay
+ * tabs, in whatever window you put them.
+ *
+ * This is why a round drives seats one at a time: only one tab per window can be active.
+ */
+async function focusSeatTab(seat: Seat): Promise<void> {
+  const tab = await chrome.tabs.get(seat.tabId);
+  if (!tab.active) await chrome.tabs.update(seat.tabId, { active: true });
 }
 
 /**

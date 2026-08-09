@@ -15,7 +15,6 @@
   let maxRounds = $state(6);
   let convergence = $state<ConvergenceStrategy>('self-report');
   let autoDrop = $state(false);
-  let isolateWindows = $state(true);
   let wordBudget = $state(400);
 
   let loadError = $state<string | null>(null);
@@ -95,7 +94,7 @@
       role: roles[t.tabId] as 'participant' | 'narrator',
     }));
     onstart(
-      { topic: topic.trim(), maxRounds, convergence, autoDrop, wordBudget, isolateWindows },
+      { topic: topic.trim(), maxRounds, convergence, autoDrop, wordBudget },
       seats,
     );
   }
@@ -221,14 +220,11 @@
       <span>Drop a failing model and keep going, instead of pausing to ask</span>
     </label>
 
-    <label class="check">
-      <input type="checkbox" bind:checked={isolateWindows} />
-      <span>
-        Give each model its own window
-        <em>Chrome stops rendering background tabs, so seats sharing a window stall forever.
-        Leave this on unless you know you need it off.</em>
-      </span>
-    </label>
+    <p class="note">
+      Models take their turns one at a time, and the panel brings each tab to the front as it
+      goes. Chrome only renders the active tab of a window, so a backgrounded model appears to
+      answer and produces nothing. Keep the tabs where you like — just don't minimize them.
+    </p>
 
     <div class="go">
       <button class="primary" disabled={!!problem} onclick={start}>Start panel</button>
@@ -293,7 +289,7 @@
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .check { display: flex; gap: 8px; align-items: start; color: var(--ink-dim); font-size: 13px; }
   .check input { width: auto; margin-top: 2px; }
-  .check em { display: block; font-style: normal; color: var(--ink-faint); font-size: 11px; margin-top: 3px; }
+  .note { color: var(--ink-faint); font-size: 12px; margin: 0; line-height: 1.5; }
   .go { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .problem { color: var(--open); font-size: 12px; }
 </style>

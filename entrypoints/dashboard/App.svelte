@@ -34,6 +34,25 @@
   const send = (type: string, extra: object = {}) =>
     void chrome.runtime.sendMessage({ type, ...extra });
 
+  let exported = $state(false);
+  /**
+   * The flight recorder, as one file. Every defect so far was diagnosed from a screenshot of
+   * a truncated log plus guesswork; this is what replaces that.
+   *
+   * It contains prompt and reply excerpts from the run, and page markup for any failure —
+   * i.e. your actual conversation content. It is written to your downloads and sent nowhere.
+   */
+  function exportRun() {
+    const blob = new Blob([JSON.stringify(run, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ai-debator-run-${run.startedAt?.replace(/[:.]/g, '-') ?? 'latest'}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    exported = true;
+    setTimeout(() => (exported = false), 2500);
+  }
+
   let copied = $state(false);
   /**
    * A broken adapter is fixed from the page's actual selectors. Putting them one click away
@@ -83,6 +102,9 @@
         <button class="danger" onclick={() => send('STOP_RUN')}>Stop</button>
       {:else if !showSetup}
         <button onclick={() => send('RESET_RUN')}>New panel</button>
+      {/if}
+      {#if run.records?.length}
+        <button onclick={exportRun}>{exported ? 'Saved' : 'Export run'}</button>
       {/if}
     </div>
   </header>

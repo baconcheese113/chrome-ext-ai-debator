@@ -15,7 +15,6 @@ const config: RunConfig = {
   convergence: 'self-report',
   autoDrop: false,
   wordBudget: 400,
-  isolateWindows: true,
 };
 
 const turn = (name: string, text: string): Turn => ({
