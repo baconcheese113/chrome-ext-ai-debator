@@ -14,6 +14,7 @@
  *   ?mode=silent      accepts the prompt and never replies at all
  *   ?mode=slow        long mid-stream pauses, to attack false-positive completion
  *   ?mode=stuck-stop  replies in full but leaves the stop button visible forever (real Claude)
+ *   ?mode=virtualized unmounts off-screen turns into empty placeholders          (real ChatGPT)
  *
  *   &words=N          length of the generated reply (default 220)
  *   &speed=N          ms between chunks (default 20)
@@ -53,12 +54,30 @@ function body(prompt) {
   return `Reply #${++turnSeq}. Considering the question, here is the reasoning. ${out.join(' ')}.`;
 }
 
+let msgSeq = 0;
+
 function append(cls, text) {
   const el = document.createElement('div');
   el.className = `msg ${cls}`;
   if (cls === 'assistant') el.dataset.role = 'assistant';
+  // A stable per-turn id, as every real provider exposes. The driver keys turn identity off
+  // this, which is what makes it immune to virtualization.
+  el.dataset.msgId = `m${++msgSeq}`;
   el.textContent = text;
   thread.appendChild(el);
+
+  // Real ChatGPT swaps off-screen turns for empty placeholder divs, so the number of
+  // rendered assistant messages stops growing with the conversation — it stays flat or
+  // drops. Counting rendered turns waits forever; identity does not.
+  if (mode === 'virtualized') {
+    for (const old of thread.querySelectorAll('.msg.assistant')) {
+      if (old !== el) {
+        old.textContent = '';
+        old.classList.remove('assistant');
+        old.removeAttribute('data-role');
+      }
+    }
+  }
   return el;
 }
 

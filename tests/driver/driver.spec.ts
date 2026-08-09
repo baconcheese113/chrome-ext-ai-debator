@@ -91,6 +91,24 @@ test('extracts correctly when layout is unavailable, as in a background tab', as
   expect(res.extraction!.text).toContain('concurrency');
 });
 
+test('works when the provider virtualizes the thread', async ({ page }) => {
+  // ChatGPT swaps off-screen turns for empty placeholders, so the count of rendered
+  // assistant messages does not grow with the conversation. "Wait for the count to increase"
+  // waited forever and reported the true-but-useless "assistant message count stayed at 3".
+  // Turn identity is unaffected by what is or isn't mounted.
+  await open(page, 'mode=virtualized&words=80&speed=5');
+
+  const first = await run(page);
+  expect(first.ok).toBe(true);
+  expect(first.extraction!.text).toContain('Reply #1.');
+
+  // Second turn: the first is now unmounted, so the rendered count is still one.
+  const second = await run(page);
+  expect(second.ok).toBe(true);
+  expect(second.extraction!.text).toContain('Reply #2.');
+  expect(second.extraction!.text).not.toContain('Reply #1.');
+});
+
 test('reads the artifact when the thread holds only a summary', async ({ page }) => {
   await open(page, 'mode=artifact&words=150&speed=5');
   const res = await run(page);

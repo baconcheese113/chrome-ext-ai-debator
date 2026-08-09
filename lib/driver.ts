@@ -45,7 +45,7 @@ export const driverTimings = {
 /** Outcome of phase 1. `before` is the pre-send message count, needed by phase 2. */
 export interface SubmitResult {
   ok: boolean;
-  before?: MessageCount;
+  before?: TurnKey;
   failure?: DriveFailure;
   detail?: string;
   warning?: string;
@@ -73,7 +73,7 @@ export async function submitTurn(
   const timings: Record<string, number> = {};
   const t = (k: string, from: number) => (timings[k] = Math.round(performance.now() - from));
   try {
-    const before = countMessages(adapter);
+    const before = lastTurnKey(adapter);
 
     let p = performance.now();
     const composer =
@@ -112,7 +112,7 @@ export async function submitTurn(
 export async function awaitTurn(
   adapter: ProviderAdapter,
   req: DriveRequest,
-  before: MessageCount,
+  before: TurnKey,
   priorTimings: Record<string, number> = {},
   warning?: string,
 ): Promise<DriveResult> {
@@ -122,17 +122,17 @@ export async function awaitTurn(
 
   try {
     let p = performance.now();
-    const appeared = await waitFor(
-      () => (countMessages(adapter).count > before.count ? true : undefined),
-      driverTimings.newMessageTimeoutMs,
-    );
+    const appeared = await waitFor(() => {
+      const now = lastTurnKey(adapter);
+      return now.key !== null && now.key !== before.key ? true : undefined;
+    }, driverTimings.newMessageTimeoutMs);
     if (!appeared) {
       raise(
         'no-new-message',
-        countMessages(adapter).count === 0
+        lastTurnKey(adapter).key === null
           ? 'no element on this page matched the response selectors — this adapter needs ' +
             'updating; use Diagnose on this tab'
-          : `assistant message count stayed at ${before.count}`,
+          : 'the newest assistant turn never changed — the model may not have replied',
       );
     }
     t('firstToken', p);
@@ -142,13 +142,11 @@ export async function awaitTurn(
     t('detect', p);
 
     p = performance.now();
-    const after = countMessages(adapter);
-    const minIndex = after.selector === before.selector ? before.count : 0;
-    extracted = extract(adapter, minIndex);
+    extracted = extract(adapter, before.key);
     if (!extracted || extracted.text.trim().length === 0) {
       raise(
         'extract-empty',
-        `a new message appeared but held no text (selector: ${after.selector ?? 'none'}) — ` +
+        `a new turn appeared but held no text (selector: ${lastTurnKey(adapter).selector ?? 'none'}) — ` +
           'the reply may have gone to a canvas or artifact; use Diagnose on this tab',
       );
     }
@@ -229,17 +227,42 @@ function validate(extraction: TurnExtraction, req: DriveRequest): void {
   }
 }
 
-export interface MessageCount {
+/**
+ * Identity of the newest assistant turn, rather than a count of rendered ones.
+ *
+ * ChatGPT virtualizes its thread: turns scrolled out of view are swapped for empty
+ * placeholder divs (`data-is-intersecting="false"`). The number of rendered assistant
+ * messages therefore does not grow with the conversation — it stays flat or drops — and
+ * "wait for the count to increase" waits forever, reporting the perfectly true and utterly
+ * misleading "assistant message count stayed at 3".
+ *
+ * Identity is virtualization-proof: whatever is unmounted, the newest turn is a different
+ * turn than it was before we sent.
+ */
+export interface TurnKey {
   selector: string | null;
-  count: number;
+  key: string | null;
 }
 
-function countMessages(adapter: ProviderAdapter): MessageCount {
-  for (const sel of adapter.response.selectors) {
-    const n = deepQueryAll(sel).filter(isVisible).length;
-    if (n > 0) return { selector: sel, count: n };
+/** Prefer a real id; fall back to a text fingerprint when the provider exposes none. */
+function signatureOf(el: HTMLElement): string {
+  const attrs = ['data-message-id', 'data-turn-id', 'data-testid'];
+  for (const a of attrs) {
+    const own = el.getAttribute(a);
+    if (own) return `${a}=${own}`;
+    const near = el.closest(`[${a}]`)?.getAttribute(a);
+    if (near) return `${a}=${near}`;
   }
-  return { selector: null, count: 0 };
+  return `text=${readText(el).slice(0, 160)}`;
+}
+
+function lastTurnKey(adapter: ProviderAdapter): TurnKey {
+  for (const sel of adapter.response.selectors) {
+    const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
+    const el = matches[matches.length - 1];
+    if (el) return { selector: sel, key: signatureOf(el) };
+  }
+  return { selector: null, key: null };
 }
 
 function findComposer(adapter: ProviderAdapter): HTMLElement | undefined {
@@ -377,13 +400,13 @@ function conversationRoot(adapter: ProviderAdapter): Node {
   return document.querySelector('main') ?? document.body;
 }
 
-function extract(adapter: ProviderAdapter, minIndex = 0): TurnExtraction | undefined {
+function extract(adapter: ProviderAdapter, excludeKey: string | null): TurnExtraction | undefined {
   const o = adapter.overrides?.extract?.(adapter);
   if (o) return o;
 
-  const fromMessage = pickLast(adapter.response.selectors, minIndex);
-  // Artifacts are a separate panel, not part of the turn sequence, so no index guard.
-  const fromArtifact = pickLast(adapter.artifact?.selectors ?? [], 0);
+  const fromMessage = pickLast(adapter.response.selectors, excludeKey);
+  // Artifacts are a separate panel, not part of the turn sequence, so no identity guard.
+  const fromArtifact = pickLast(adapter.artifact?.selectors ?? [], null);
 
   // Prefer whichever actually holds the content. Claude in Cowork puts a 278-char summary in
   // the thread and the real answer in the artifact, so "message exists" is not enough —
@@ -405,13 +428,17 @@ function extract(adapter: ProviderAdapter, minIndex = 0): TurnExtraction | undef
  */
 function pickLast(
   selectors: string[],
-  minIndex: number,
+  excludeKey: string | null,
 ): { text: string; html: string } | undefined {
   for (const sel of selectors) {
     const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
-    for (let i = matches.length - 1; i >= minIndex; i--) {
+    for (let i = matches.length - 1; i >= 0; i--) {
       const el = matches[i];
       if (!el) continue;
+      // Walking back past an empty trailing node is necessary — ChatGPT's canvas leaves one.
+      // Walking back INTO the turn that was already newest before we sent would hand back
+      // the previous round's reply, so stop there.
+      if (excludeKey !== null && signatureOf(el) === excludeKey) break;
       const text = readText(el);
       if (text.trim().length > 0) return { text, html: el.innerHTML };
     }
