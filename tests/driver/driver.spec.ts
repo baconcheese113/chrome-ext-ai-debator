@@ -13,7 +13,7 @@ const PROMPT = 'Explain optimistic concurrency control in detail, with examples.
 async function open(
   page: Page,
   query: string,
-  timeouts?: { newMessageTimeoutMs?: number; staleStopMs?: number },
+  timeouts?: { newMessageTimeoutMs?: number; staleStopMs?: number; settleQuietMs?: number[] },
 ) {
   await page.goto(`/index.html?${query}`);
   await page.addScriptTag({ url: '/dist/driver-harness.js' });
@@ -143,11 +143,42 @@ test('walks past an empty trailing message node', async ({ page }) => {
 
 test('rejects a truncated reply instead of reporting success', async ({ page }) => {
   // The failure mode that matters most: not an error, but a confident partial answer.
-  await open(page, 'mode=truncate&words=400&speed=2');
+  // Re-looks are off: this stream is dead, so waiting the production 12s + 30s would only
+  // make the suite slower to reach the same verdict.
+  await open(page, 'mode=truncate&words=400&speed=2', { settleQuietMs: [] });
   const res = await run(page);
 
   expect(res.ok).toBe(false);
   expect(res.failure).toBe('implausible-response');
+});
+
+test('waits out a reasoning model that goes silent before answering', async ({ page }) => {
+  // Kimi, and ChatGPT's thinking models. The turn appears at once as a short "Thinking"
+  // header, then the DOM is *completely static* while the model reasons server-side. Silence
+  // is our completion signal, so the driver called the turn finished and extracted the
+  // header — an 86-character answer to a question the model had not begun answering.
+  //
+  // Shrunk from the production [12s, 30s] so the test costs seconds, not a minute.
+  await open(page, 'mode=thinking&words=120&speed=3&thinkms=6000', {
+    settleQuietMs: [3000, 9000],
+  });
+  const res = await run(page);
+
+  expect(res.ok).toBe(true);
+  expect(res.extraction!.text).toContain('concurrency');
+  expect(res.extraction!.text.length).toBeGreaterThan(200);
+});
+
+test('without the settle re-look, the same page yields the thinking header', async ({ page }) => {
+  // The counterpart to the test above, and the reason to trust it: with re-looks disabled
+  // this page reproduces the original defect exactly. Without this, the test above could be
+  // passing because the mock is too gentle rather than because the fix works.
+  await open(page, 'mode=thinking&words=120&speed=3&thinkms=6000', { settleQuietMs: [] });
+  const res = await run(page);
+
+  expect(res.ok).toBe(false);
+  expect(res.failure).toBe('implausible-response');
+  expect(res.extraction!.text).toContain('Thinking');
 });
 
 test('rejects a reply that is just our own prompt echoed back', async ({ page }) => {
@@ -215,7 +246,8 @@ test('says the adapter is wrong when no selector matches the page', async ({ pag
 test('never returns a previous turn when the newest one is blank', async ({ page }) => {
   // Guards the extraction floor. Without it, a blank new turn silently resolves to the last
   // round's reply and the panel trades stale content while looking healthy.
-  await open(page, 'mode=normal&words=100&speed=5');
+  // Re-looks off: the blank tail never fills, so escalating silence only costs time.
+  await open(page, 'mode=normal&words=100&speed=5', { settleQuietMs: [] });
   const first = await run(page);
   expect(first.ok).toBe(true);
 

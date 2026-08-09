@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { RunConfig, RunState, Seat } from '../../lib/types';
-import { createFakeChrome, fail, ok, type FakeChrome, type TabScript } from './fake-chrome';
+import type { IncidentAction, RunConfig, RunState, Seat } from '../../lib/types';
+import {
+  createFakeChrome,
+  fail,
+  failBeforeSend,
+  ok,
+  type FakeChrome,
+  type TabScript,
+} from './fake-chrome';
 
 /**
  * The orchestrator holds module-level state (running, stopRequested, incidentResolver), so
@@ -88,7 +95,7 @@ async function patchPending(text: string): Promise<void> {
 /** Waits for the run to pause on an incident, then answers it. */
 async function answerIncident(
   orch: typeof import('../../lib/orchestrator'),
-  action: 'retry' | 'drop' | 'abort',
+  action: IncidentAction,
 ) {
   for (let i = 0; i < 200; i++) {
     if (getRunState()?.incident) {
@@ -99,6 +106,68 @@ async function answerIncident(
   }
   return false;
 }
+
+describe('re-reading a page instead of re-sending', () => {
+  it('recovers a reply that was read too early, without sending anything again', async () => {
+    // The commonest real failure, by a distance: a reasoning model pauses, the driver reads
+    // the page during the pause, and an answer that is sitting right there is reported as
+    // truncated. "Try again" costs a message and buries it; a second read costs nothing.
+    setup(
+      new Map([
+        [1, { results: [fail('implausible-response', 'only 86 chars'), reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const done = orch.startRun({ ...CONFIG, maxRounds: 1 }, [seat(1, 'A'), seat(2, 'B')]);
+    expect(await answerIncident(orch, 'recheck')).toBe(true);
+    await done;
+
+    // One prompt reached the model, and the turn still landed.
+    expect(fake.prompts.get(1)).toHaveLength(1);
+    expect(fake.rechecks).toEqual([1]);
+    expect(getRunState().turns.filter((t) => t.seatId === 'seat-1')).toHaveLength(1);
+  });
+
+  it('does not offer a re-read when the prompt never went in', async () => {
+    // Without a baseline turn, re-reading can only return the PREVIOUS round's reply — a
+    // silent corruption that would look like a repair. So the option is withheld.
+    setup(
+      new Map([
+        [1, { results: [failBeforeSend('composer-not-found', 'no composer on the page')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const done = orch.startRun({ ...CONFIG, maxRounds: 1 }, [seat(1, 'A'), seat(2, 'B')]);
+
+    expect(await waitFor(() => Boolean(getRunState()?.incident))).toBe(true);
+    expect(getRunState().incident!.canRecheck).toBe(false);
+    orch.resolveIncident('drop');
+    await done;
+  });
+
+  it('re-reads rather than re-submitting in parallel mode too', async () => {
+    setup(
+      new Map([
+        [1, { results: [fail('extract-empty', 'no text yet'), reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const done = orch.startRun({ ...CONFIG, maxRounds: 1, turnMode: 'parallel' }, [
+      seat(1, 'A'),
+      seat(2, 'B'),
+    ]);
+    expect(await answerIncident(orch, 'recheck')).toBe(true);
+    await done;
+
+    // Exactly one DRIVE_SUBMIT for this seat — the re-read reused it.
+    expect(fake.submits.filter((t) => t === 1)).toHaveLength(1);
+    expect(fake.rechecks).toEqual([1]);
+    expect(getRunState().turns.filter((t) => t.seatId === 'seat-1')).toHaveLength(1);
+  });
+});
 
 describe('run loop', () => {
   it('runs rounds, records turns, and finishes', async () => {
@@ -481,6 +550,65 @@ describe('steering', () => {
 
     expect(getRunState().awaitingSteer).toBe(false);
     expect(getRunState().round).toBe(2);
+    expect(getRunState().status).toBe('done');
+  });
+});
+
+describe('armed intentions', () => {
+  /**
+   * Both of these take effect at the end of the round — minutes after the click. Held only in
+   * the worker's memory, they changed nothing visible, which is indistinguishable from a
+   * click that never registered, and there was no way to change your mind.
+   *
+   * The run is parked on an incident throughout: a point where the loop is provably not
+   * writing state, so the toggles can be exercised without racing it.
+   */
+  it('mirrors "end after this round" into state and gives it back when clicked again', async () => {
+    setup(
+      new Map([
+        [1, { results: [fail('driver-error'), reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const running = orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
+    expect(await waitFor(() => Boolean(getRunState()?.incident))).toBe(true);
+
+    orch.markConverged();
+    expect(await waitFor(() => getRunState().endAfterRound === true)).toBe(true);
+
+    orch.markConverged(false);
+    expect(await waitFor(() => getRunState().endAfterRound === false)).toBe(true);
+
+    orch.resolveIncident('retry');
+    await running;
+
+    // Revoked in substance, not just in the label: round 2 still ran.
+    expect(getRunState().round).toBe(2);
+  });
+
+  it('mirrors "pause after this round" into state and gives it back when clicked again', async () => {
+    setup(
+      new Map([
+        [1, { results: [fail('driver-error'), reply('alpha')] }],
+        [2, { results: [reply('beta')] }],
+      ]),
+    );
+    const orch = await loadOrchestrator();
+    const running = orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
+    expect(await waitFor(() => Boolean(getRunState()?.incident))).toBe(true);
+
+    orch.pauseAfterRound();
+    expect(await waitFor(() => getRunState().pauseAfterRound === true)).toBe(true);
+
+    orch.pauseAfterRound(false);
+    expect(await waitFor(() => getRunState().pauseAfterRound === false)).toBe(true);
+
+    orch.resolveIncident('retry');
+    await running;
+
+    // Never held: the run reached its own end rather than waiting for a Resume.
+    expect(getRunState().awaitingSteer).toBe(false);
     expect(getRunState().status).toBe('done');
   });
 });

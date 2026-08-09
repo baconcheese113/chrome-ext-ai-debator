@@ -7,7 +7,10 @@ import type {
   DriveResult,
   ProviderAdapter,
   TurnExtraction,
+  TurnKey,
 } from './types';
+
+export type { TurnKey };
 
 /**
  * Quiescence threshold. ChatGPT logged 85–97 mutation bursts inside a single long response,
@@ -33,6 +36,19 @@ const STOP_GONE_CONFIRM_MS = 900;
 const STALE_STOP_DEFAULT_MS = 120_000;
 
 /**
+ * Failures that mean "we may simply have looked too early", as opposed to "this is broken".
+ *
+ * A reasoning model produces a long stretch of *completely static DOM* between accepting the
+ * prompt and writing its answer — Kimi renders a collapsed "Thinking" header and then goes
+ * silent while it reasons server-side. Silence is our completion signal, so the driver called
+ * the turn finished and extracted the header: a confident 86-character answer to a question
+ * the model had not started answering.
+ *
+ * The honest response to these two failures is not to fail, it is to look again after longer.
+ */
+const SETTLE_RETRYABLE: readonly DriveFailure[] = ['implausible-response', 'extract-empty'];
+
+/**
  * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
  * the no-reply timeout; at the production value they alone cost 90 seconds.
  */
@@ -40,6 +56,13 @@ export const driverTimings = {
   newMessageTimeoutMs: 45_000,
   detectTimeoutMs: 300_000,
   staleStopMs: STALE_STOP_DEFAULT_MS,
+  /**
+   * Silence demanded on each successive re-look after a truncation-shaped result. Escalating
+   * rather than fixed: the first re-look catches a short thinking pause cheaply, the second
+   * survives a model that reasons for half a minute before typing. Bounded, because a reply
+   * that is still too short after this really is too short.
+   */
+  settleQuietMs: [12_000, 30_000] as number[],
 };
 
 /** Outcome of phase 1. `before` is the pre-send message count, needed by phase 2. */
@@ -137,29 +160,33 @@ export async function awaitTurn(
     }
     t('firstToken', p);
 
-    p = performance.now();
-    await awaitQuiescence(adapter);
-    t('detect', p);
+    // Look, judge, and if the answer merely looks unfinished, wait longer and look again.
+    for (let look = 0; ; look++) {
+      const extraQuiet = look === 0 ? 0 : (driverTimings.settleQuietMs[look - 1] ?? 0);
 
-    p = performance.now();
-    extracted = extract(adapter, before.key);
-    if (!extracted || extracted.text.trim().length === 0) {
-      raise(
-        'extract-empty',
-        `a new turn appeared but held no text (selector: ${lastTurnKey(adapter).selector ?? 'none'}) — ` +
-          'the reply may have gone to a canvas or artifact; use Diagnose on this tab',
-      );
+      p = performance.now();
+      await awaitQuiescence(adapter, extraQuiet);
+      t(look === 0 ? 'detect' : `settle${look}`, p);
+
+      p = performance.now();
+      extracted = extract(adapter, before.key);
+      const problem = judge(extracted, req, adapter);
+      t(look === 0 ? 'extract' : `extract${look}`, p);
+
+      if (!problem) break;
+      if (look >= driverTimings.settleQuietMs.length || !SETTLE_RETRYABLE.includes(problem.failure)) {
+        throw problem;
+      }
     }
-    t('extract', p);
 
-    validate(extracted, req);
-    return { ok: true, extraction: extracted, timings, warning };
+    return { ok: true, extraction: extracted, before, timings, warning };
   } catch (err) {
     const de = err instanceof DriveError ? err : undefined;
     return {
       ok: false,
       failure: de?.failure ?? 'driver-error',
       detail: de?.detail ?? String(err),
+      before,
       warning,
       extraction: extracted,
       timings,
@@ -179,6 +206,10 @@ export async function drive(
       ok: false,
       failure: submitted.failure,
       detail: submitted.detail,
+      // Undefined: nothing went in, so there is nothing for a later re-read to find except
+      // the previous round's reply. The orchestrator uses this to decide whether re-reading
+      // is even offered.
+      before: submitted.before,
       timings: submitted.timings,
       diagnostics: submitted.diagnostics,
     };
@@ -188,6 +219,31 @@ export async function drive(
 
 function raise(failure: DriveFailure, detail: string): never {
   throw new DriveError(failure, detail);
+}
+
+/**
+ * Everything wrong with what we just read, as a value rather than a throw — so a caller can
+ * decide whether it is worth waiting and reading again.
+ */
+function judge(
+  extraction: TurnExtraction | undefined,
+  req: DriveRequest,
+  adapter: ProviderAdapter,
+): DriveError | undefined {
+  if (!extraction || extraction.text.trim().length === 0) {
+    return new DriveError(
+      'extract-empty',
+      `a new turn appeared but held no text (selector: ${lastTurnKey(adapter).selector ?? 'none'}) — ` +
+        'the reply may have gone to a canvas or artifact; use Diagnose on this tab',
+    );
+  }
+  try {
+    validate(extraction, req);
+  } catch (err) {
+    if (err instanceof DriveError) return err;
+    throw err;
+  }
+  return undefined;
 }
 
 /**
@@ -238,11 +294,10 @@ function validate(extraction: TurnExtraction, req: DriveRequest): void {
  *
  * Identity is virtualization-proof: whatever is unmounted, the newest turn is a different
  * turn than it was before we sent.
+ *
+ * The `TurnKey` shape itself lives in lib/types.ts, because it now crosses the page boundary:
+ * the orchestrator holds one so it can ask the page to look again later.
  */
-export interface TurnKey {
-  selector: string | null;
-  key: string | null;
-}
 
 /**
  * Attributes that identify a turn, best first.
@@ -380,7 +435,7 @@ function submit(composer: HTMLElement, adapter: ProviderAdapter): boolean {
  * means unrelated chrome — sidebars, autosave, blinking cursors — keeps resetting the quiet
  * timer, which is what made Gemini take far longer to register than it actually needed.
  */
-async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
+async function awaitQuiescence(adapter: ProviderAdapter, minQuietMs = 0): Promise<void> {
   const deadline = performance.now() + driverTimings.detectTimeoutMs;
   let lastMutation = performance.now();
 
@@ -401,7 +456,7 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
       await sleep(250);
       const quietFor = performance.now() - lastMutation;
 
-      const stopVisible = anyVisible(adapter.generating.stopSelectors);
+      const stopVisible = stopSignal(adapter);
       // A visible stop button normally means it is still working, whatever the DOM does —
       // but only while the conversation is actually changing. A stop button sitting over a
       // completely static thread is stale UI, and believing it costs the full timeout.
@@ -413,6 +468,11 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
         continue;
       }
       stopGoneSince ??= performance.now();
+
+      // A re-look demands its own floor on top of whichever path fires. Without it, calling
+      // this again while the page is already static returns instantly and re-reads exactly
+      // the same half-finished answer.
+      if (quietFor < minQuietMs) continue;
 
       // Fast path: generation demonstrably started and has demonstrably stopped.
       if (sawStop && performance.now() - stopGoneSince >= STOP_GONE_CONFIRM_MS) {
@@ -426,6 +486,29 @@ async function awaitQuiescence(adapter: ProviderAdapter): Promise<void> {
   } finally {
     observer.disconnect();
   }
+}
+
+/**
+ * Last-resort stop-button patterns, tried only when an adapter's own selectors match nothing.
+ *
+ * Every provider names this control "stop" somewhere a screen reader or a test can find it,
+ * because it has to. Kimi is the case in point: it has a perfectly good stop button, our
+ * adapter did not know its selector, so the driver fell back to pure silence and mistook a
+ * reasoning pause for a finished answer.
+ *
+ * Deliberately narrow — these match only elements that literally say "stop". A false match
+ * here costs a wait, not a wrong answer, because a stop button over a static thread is
+ * disbelieved after `staleStopMs`.
+ */
+const GENERIC_STOP_SELECTORS = [
+  'button[data-testid*="stop" i]',
+  'button[aria-label*="stop" i]',
+  'button[title*="stop" i]',
+  '[role="button"][aria-label*="stop" i]',
+];
+
+function stopSignal(adapter: ProviderAdapter): string | null {
+  return anyVisible(adapter.generating.stopSelectors) ?? anyVisible(GENERIC_STOP_SELECTORS);
 }
 
 /** The tightest element containing the conversation turns, so unrelated UI is ignored. */

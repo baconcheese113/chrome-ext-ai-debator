@@ -24,6 +24,8 @@ export const EMPTY_RUN: RunState = {
   steers: [],
   pendingSteer: null,
   awaitingSteer: false,
+  endAfterRound: false,
+  pauseAfterRound: false,
   startedAt: null,
   finishedAt: null,
 };

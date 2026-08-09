@@ -17,8 +17,29 @@ export function collectDiagnostics(note: string): Diagnostics {
     candidateButtons: buttonCandidates(),
     candidateResponseContainers: responseCandidates(),
     conversationHtml: captureConversationHtml(),
+    composerHtml: captureComposerHtml(),
     note,
   };
+}
+
+/** Cap on the composer capture. The block around a text box is small; this is generous. */
+const COMPOSER_BUDGET = 40_000;
+
+/**
+ * The composer and everything sitting with it.
+ *
+ * Sketching buttons has now failed three times to reveal a send control: on ChatGPT the
+ * sidebar's history menus filled the list before the composer was reached, and on Kimi the
+ * send control is not a <button> or a [role="button"] at all, so it was never a candidate.
+ * Markup does not have that problem. It also carries no conversation text.
+ */
+function captureComposerHtml(): string | undefined {
+  const region = composerRegions()[0];
+  if (!region) return undefined;
+  const html = (region as HTMLElement).outerHTML ?? '';
+  return html.length > COMPOSER_BUDGET
+    ? `${html.slice(0, COMPOSER_BUDGET)}\n<!-- truncated at ${COMPOSER_BUDGET} chars -->`
+    : html;
 }
 
 /** Cap on captured markup. Enough to rebuild selectors from; small enough to paste. */
@@ -56,17 +77,62 @@ function composerCandidates(): ElementSketch[] {
     .slice(0, 15);
 }
 
+/** Words that name the two controls we actually drive, in any provider's vocabulary. */
+const CONTROL_WORDS = /\b(send|stop|submit|cancel|halt)\b/i;
+
+/**
+ * The block of page around the composer, so buttons that live with it can be recognised.
+ *
+ * Chat pages put the composer last in the DOM and a conversation sidebar first. A capture
+ * that takes the first N buttons therefore returns N history-item menus and drops the two
+ * controls that matter — which is exactly what a real ChatGPT capture did, and why Kimi's
+ * send button has stayed invisible to us across several rounds of debugging.
+ */
+function composerRegions(): Element[] {
+  const out: Element[] = [];
+  const composers = dedupe([
+    ...deepQueryAll('textarea'),
+    ...deepQueryAll('[contenteditable="true"]'),
+    ...deepQueryAll('[role="textbox"]'),
+  ]).filter(isVisible);
+
+  for (const c of composers) {
+    const form = c.closest?.('form');
+    if (form) {
+      out.push(form);
+      continue;
+    }
+    // No form to anchor on, so climb a fixed distance. Six levels reliably clears the
+    // toolbar row that holds send/stop without swallowing the whole page.
+    let node: Element = c;
+    for (let depth = 0; depth < 6 && node.parentElement; depth++) node = node.parentElement;
+    out.push(node);
+  }
+  return out;
+}
+
 function buttonCandidates(): ElementSketch[] {
-  const els = [...deepQueryAll('button'), ...deepQueryAll('[role="button"]')];
-  return dedupe(els)
+  const regions = composerRegions();
+  const els = dedupe([...deepQueryAll('button'), ...deepQueryAll('[role="button"]')])
     .filter(isVisible)
     // Buttons with no label of any kind are almost never the send/stop control.
     .filter((e) => {
       const label = `${e.getAttribute("aria-label") ?? ""} ${e.getAttribute("data-testid") ?? ""} ${readText(e as HTMLElement)}`;
       return label.trim().length > 0;
-    })
-    .map(sketch)
-    .slice(0, 25);
+    });
+
+  const score = (e: Element): number => {
+    const label = `${e.getAttribute('aria-label') ?? ''} ${e.getAttribute('data-testid') ?? ''} ${e.getAttribute('title') ?? ''}`;
+    return (
+      (regions.some((r) => r.contains(e)) ? 100 : 0) + (CONTROL_WORDS.test(label) ? 50 : 0)
+    );
+  };
+
+  return els
+    .map((e) => ({ e, s: score(e) }))
+    .sort((a, b) => b.s - a.s)
+    .map((x) => sketch(x.e))
+    .slice(0, 30);
 }
 
 /**

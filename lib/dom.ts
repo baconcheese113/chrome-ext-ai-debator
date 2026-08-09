@@ -38,6 +38,17 @@ export function readText(el: HTMLElement): string {
  * Query across open shadow roots as well as the light DOM. Gemini in particular puts real
  * controls inside shadow roots, and a plain querySelectorAll silently misses them — which
  * would make E1 report a false "config can't express this".
+ *
+ * The shadow walk is a FALLBACK, not an addition. Finding open shadow roots means visiting
+ * every element in the document, and the driver runs these queries four times a second for
+ * as long as a model is generating — several selectors per poll, for minutes. On a long
+ * ChatGPT thread (thousands of nodes, rendered KaTeX) that traversal is heavy enough to be
+ * part of why the tab stops responding, and it buys nothing there because ChatGPT uses no
+ * shadow DOM at all. So: if the light DOM answered, take the answer.
+ *
+ * The cost is a selector that matches in BOTH trees, where only the light-DOM matches would
+ * be returned. No provider has ever done that, and a provider that did would be visibly
+ * wrong rather than subtly wrong.
  */
 export function deepQueryAll(selector: string, root: ParentNode = document): Element[] {
   const out: Element[] = [];
@@ -46,6 +57,8 @@ export function deepQueryAll(selector: string, root: ParentNode = document): Ele
   } catch {
     return out; // invalid selector — treat as no match rather than exploding
   }
+  if (out.length) return out;
+
   const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_ELEMENT);
   let node = walker.nextNode() as Element | null;
   while (node) {

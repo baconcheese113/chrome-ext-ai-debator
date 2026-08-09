@@ -53,10 +53,20 @@
     {#if run.awaitingSteer}
       <button class="primary" onclick={resume}>Resume</button>
     {:else}
-      <button onclick={() => send('PAUSE_AFTER_ROUND')}>Pause after this round</button>
+      <button
+        class:armed={run.pauseAfterRound}
+        aria-pressed={run.pauseAfterRound}
+        onclick={() => send('PAUSE_AFTER_ROUND', { on: !run.pauseAfterRound })}
+      >
+        {run.pauseAfterRound ? `Pausing after round ${run.round} ✕` : 'Pause after this round'}
+      </button>
     {/if}
     <span class="hint">
-      Every model sees it at the start of the next round, marked as coming from you.
+      {#if run.pauseAfterRound && !run.awaitingSteer}
+        The panel will stop and wait for you once round {run.round} is summarised.
+      {:else}
+        Every model sees it at the start of the next round, marked as coming from you.
+      {/if}
     </span>
   </div>
 </section>

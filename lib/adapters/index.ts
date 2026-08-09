@@ -205,7 +205,18 @@ const kimi: ProviderAdapter = {
   urlPatterns: ['https://kimi.com/*', 'https://www.kimi.com/*'],
   composer: { selectors: ['div[contenteditable="true"]', 'textarea'], kind: 'auto' },
   submit: { strategy: 'auto', buttonSelectors: ['button[data-testid="msh-send-button"]', 'button[type="submit"]'] },
-  generating: { stopSelectors: ['button[aria-label*="Stop" i]', 'div.stop-icon'] },
+  // GUESS, mirroring the confirmed `msh-send-button` naming. Kimi is a reasoning model: it
+  // renders a collapsed "Thinking" header and then leaves the DOM completely static while it
+  // reasons, so without a generating signal the driver reads the header as the answer. The
+  // driver also falls back to generic `*stop*` patterns, which should cover this either way.
+  generating: {
+    stopSelectors: [
+      'button[data-testid="msh-stop-button"]',
+      'button[data-testid*="stop" i]',
+      'button[aria-label*="Stop" i]',
+      'div.stop-icon',
+    ],
+  },
   response: { selectors: ['div.markdown-container', 'div[class*="segment-assistant"]'] },
 };
 

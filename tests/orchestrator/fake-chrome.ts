@@ -1,4 +1,4 @@
-import type { DriveResult } from '../../lib/types';
+import type { DriveResult, TurnKey } from '../../lib/types';
 
 /**
  * A fake `chrome` sufficient to run the orchestrator's round loop in node.
@@ -31,15 +31,38 @@ export interface FakeChrome {
   injections: number[];
   submits: number[];
   harvests: number[];
+  /**
+   * Tabs asked to re-read their page. Separate from `prompts` on purpose: the whole value of
+   * a re-read is that it sends nothing, and only a distinct ledger can prove that.
+   */
+  rechecks: number[];
   install(): void;
   uninstall(): void;
 }
 
+/**
+ * The turn that was newest before our prompt went in. The real driver returns this whenever
+ * it got as far as sending, and its presence is what makes a later re-read of the page safe.
+ */
+const BEFORE: TurnKey = { selector: '.msg.assistant', key: 'data-message-id=m3' };
+
 export function ok(text: string, via: DriveResult['extraction'] extends undefined ? never : 'message' | 'artifact' = 'message'): DriveResult {
-  return { ok: true, extraction: { text, html: `<p>${text}</p>`, via }, timings: {} };
+  return { ok: true, extraction: { text, html: `<p>${text}</p>`, via }, before: BEFORE, timings: {} };
 }
 
 export function fail(failure: DriveResult['failure'], detail = 'scripted failure'): DriveResult {
+  return { ok: false, failure, detail, before: BEFORE, timings: {} };
+}
+
+/**
+ * A failure from before the prompt reached the page — no composer, no send button. There is
+ * nothing on screen to re-read, so re-reading must not be offered: it could only return the
+ * previous round's reply.
+ */
+export function failBeforeSend(
+  failure: DriveResult['failure'],
+  detail = 'scripted pre-send failure',
+): DriveResult {
   return { ok: false, failure, detail, timings: {} };
 }
 
@@ -52,6 +75,7 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
   /** Order of DRIVE_SUBMIT and DRIVE_AWAIT calls, so parallel mode's shape is assertable. */
   const submits: number[] = [];
   const harvests: number[] = [];
+  const rechecks: number[] = [];
   const cursors = new Map<number, number>();
   const changeListeners: Array<(c: Record<string, unknown>, area: string) => void> = [];
 
@@ -102,10 +126,15 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
           floors.push(msg.minChars ?? -1);
           minChars.set(tabId, floors);
           submits.push(tabId);
-          return { ok: true, before: { selector: '.m', count: 0 }, timings: {} };
+          return { ok: true, before: BEFORE, timings: {} };
         }
         if (msg.type === 'DRIVE_AWAIT') {
           harvests.push(tabId);
+          return nextResult(tabId);
+        }
+        // A re-read. Deliberately does NOT touch `prompts`: nothing is sent to the model.
+        if (msg.type === 'DRIVE_RECHECK') {
+          rechecks.push(tabId);
           return nextResult(tabId);
         }
         if (msg.type === 'DRIVE') {
@@ -168,6 +197,7 @@ export function createFakeChrome(scripts: Map<number, TabScript>): FakeChrome {
     injections,
     submits,
     harvests,
+    rechecks,
     install() {
       (globalThis as { chrome?: unknown }).chrome = api;
     },

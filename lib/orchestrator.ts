@@ -14,10 +14,12 @@ import type {
   Diagnostics,
   DriveResult,
   Incident,
+  IncidentAction,
   RunConfig,
   RunState,
   Seat,
   Turn,
+  TurnKey,
 } from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -52,11 +54,11 @@ export const timings = {
 /** Set while a run is in flight so the service worker isn't killed mid-round. */
 let keepaliveTimer: ReturnType<typeof setInterval> | undefined;
 /** Resolves when the user answers an incident prompt. */
-let incidentResolver: ((action: 'retry' | 'drop' | 'abort') => void) | undefined;
+let incidentResolver: ((action: IncidentAction) => void) | undefined;
 let stopRequested = false;
 let manualConverge = false;
 
-export function resolveIncident(action: 'retry' | 'drop' | 'abort'): void {
+export function resolveIncident(action: IncidentAction): void {
   incidentResolver?.(action);
   incidentResolver = undefined;
 }
@@ -81,17 +83,27 @@ export async function reconcileOrphanedRun(reason: string): Promise<void> {
   await appendLog('warn', reason);
 }
 
-export function markConverged(): void {
-  manualConverge = true;
+/**
+ * Arm (or disarm) "finish after this round".
+ *
+ * Mirrored into stored state, not just held here: a button whose only effect happens minutes
+ * later, invisibly, reads as a button that did not register — so people press it twice, or
+ * press Stop instead and lose the closing summary.
+ */
+export function markConverged(on = true): void {
+  manualConverge = on;
+  void patchRun({ endAfterRound: on });
 }
 
-/** Hold at the next round boundary so there is time to read and compose a note. */
-export function pauseAfterRound(): void {
-  pauseRequested = true;
+/** Arm (or disarm) a hold at the next round boundary, for composing a note unhurried. */
+export function pauseAfterRound(on = true): void {
+  pauseRequested = on;
+  void patchRun({ pauseAfterRound: on });
 }
 
 export function resumeRun(): void {
   pauseRequested = false;
+  void patchRun({ pauseAfterRound: false });
   resumeResolver?.();
   resumeResolver = undefined;
 }
@@ -164,6 +176,8 @@ export async function startRun(
     steers: [],
     pendingSteer: null,
     awaitingSteer: false,
+    endAfterRound: false,
+    pauseAfterRound: false,
     startedAt: new Date().toISOString(),
     finishedAt: null,
   });
@@ -437,7 +451,7 @@ async function runRoundParallel(
   prompts: Map<string, string>,
   round: number,
 ): Promise<RoundResult> {
-  const submitted = new Map<string, { before: unknown; warning?: string }>();
+  const submitted = new Map<string, { before: TurnKey; warning?: string }>();
   const results: RoundResult = [];
 
   for (const seat of active) {
@@ -473,26 +487,43 @@ async function runRoundParallel(
       continue;
     }
 
-    let result: DriveResult | undefined;
-    try {
-      await focusSeatTab(seat);
-      result = (await chrome.tabs.sendMessage(seat.tabId, {
-        type: 'DRIVE_AWAIT',
-        providerId: seat.providerId,
-        prompt: prompts.get(seat.seatId)!,
-        minChars: MIN_REPLY_CHARS,
-        before: pending.before,
-        warning: pending.warning,
-      })) as DriveResult;
-    } catch (err) {
-      result = { ok: false, failure: 'tab-closed' as never, detail: String(err), timings: {} };
-    }
+    /** Read the page for this seat's reply. Sends nothing — the prompt went in above. */
+    const harvest = async (type: 'DRIVE_AWAIT' | 'DRIVE_RECHECK'): Promise<DriveResult> => {
+      try {
+        await focusSeatTab(seat);
+        return (await chrome.tabs.sendMessage(seat.tabId, {
+          type,
+          providerId: seat.providerId,
+          prompt: prompts.get(seat.seatId)!,
+          minChars: MIN_REPLY_CHARS,
+          before: pending.before,
+          warning: pending.warning,
+        })) as DriveResult;
+      } catch (err) {
+        return { ok: false, failure: 'tab-closed' as never, detail: String(err), timings: {} };
+      }
+    };
 
-    await recordAttempt(seat, round, 1, prompts.get(seat.seatId)!, result);
-    if (result?.ok && result.extraction) {
-      await commitTurn(seat, round, result);
-      results.push({ seat, ok: true });
-    } else {
+    let result = await harvest('DRIVE_AWAIT');
+    let attempt = 1;
+    let aborted = false;
+
+    for (;;) {
+      await recordAttempt(
+        seat,
+        round,
+        attempt,
+        prompts.get(seat.seatId)!,
+        result,
+        attempt === 1 ? 'send' : 'recheck',
+      );
+
+      if (result?.ok && result.extraction) {
+        await commitTurn(seat, round, result);
+        results.push({ seat, ok: true });
+        break;
+      }
+
       // Hand the failure to the shared policy: pause and ask, or auto-drop.
       const action = await raiseIncident(
         seat,
@@ -500,15 +531,25 @@ async function runRoundParallel(
         result?.failure ?? 'driver-error',
         result?.detail ?? 'no detail',
         result?.diagnostics,
+        pending.before,
       );
+
+      if (action === 'recheck') {
+        attempt++;
+        result = await harvest('DRIVE_RECHECK');
+        continue;
+      }
       if (action === 'retry') {
         const outcome = await sendTo(seat, prompts.get(seat.seatId)!, MIN_REPLY_CHARS, round);
         results.push({ seat, ok: outcome === 'ok' });
-      } else {
-        results.push({ seat, ok: false });
-        if (action === 'abort') break;
+        break;
       }
+      results.push({ seat, ok: false });
+      aborted = action === 'abort';
+      break;
     }
+
+    if (aborted) break;
   }
 
   return results;
@@ -539,11 +580,20 @@ async function sendTo(
   round: number,
 ): Promise<SendOutcome> {
   let attempt = 0;
+  /**
+   * Set when the last incident was answered with "check again". The prompt is already in the
+   * thread; sending it a second time would cost a message and bury the answer that is sitting
+   * on screen. So the next pass re-reads instead of re-sending.
+   */
+  let recheckOnly = false;
+  /** The newest turn as it stood before our prompt went in, so a re-read stays scoped. */
+  let before: TurnKey | undefined;
+
   for (;;) {
     attempt++;
     if (stopRequested) return 'aborted';
 
-    await updateSeat(seat.seatId, { status: 'sending' });
+    await updateSeat(seat.seatId, { status: recheckOnly ? 'waiting' : 'sending' });
 
     try {
       await focusSeatTab(seat);
@@ -553,8 +603,10 @@ async function sendTo(
 
     const guard = await guardWindow(seat);
     if (guard) {
-      const action = await raiseIncident(seat, round, 'window-minimized', guard);
-      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+      const action = await raiseIncident(seat, round, 'window-minimized', guard, undefined, before);
+      if (action === 'abort') return 'aborted';
+      if (action === 'drop') return 'dropped';
+      recheckOnly = action === 'recheck';
       continue;
     }
 
@@ -565,27 +617,37 @@ async function sendTo(
         round,
         'tab-closed',
         'content script not reachable — reload the tab and retry',
+        undefined,
+        before,
       );
-      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+      if (action === 'abort') return 'aborted';
+      if (action === 'drop') return 'dropped';
+      recheckOnly = action === 'recheck';
       continue;
     }
 
     let result: DriveResult;
     try {
       await updateSeat(seat.seatId, { status: 'waiting' });
-      result = (await chrome.tabs.sendMessage(seat.tabId, {
-        type: 'DRIVE',
-        providerId: seat.providerId,
-        prompt,
-        minChars,
-      })) as DriveResult;
+      result = (await chrome.tabs.sendMessage(
+        seat.tabId,
+        recheckOnly
+          ? { type: 'DRIVE_RECHECK', providerId: seat.providerId, prompt, minChars, before }
+          : { type: 'DRIVE', providerId: seat.providerId, prompt, minChars },
+      )) as DriveResult;
     } catch (err) {
-      const action = await raiseIncident(seat, round, 'tab-closed', String(err));
-      if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+      const action = await raiseIncident(seat, round, 'tab-closed', String(err), undefined, before);
+      if (action === 'abort') return 'aborted';
+      if (action === 'drop') return 'dropped';
+      recheckOnly = action === 'recheck';
       continue;
     }
 
-    await recordAttempt(seat, round, attempt, prompt, result);
+    // Only a real send establishes a new baseline. A re-read must keep the one from the send,
+    // or the second re-read would be free to return the previous round's turn.
+    if (!recheckOnly) before = result?.before;
+
+    await recordAttempt(seat, round, attempt, prompt, result, recheckOnly ? 'recheck' : 'send');
 
     if (result?.ok && result.extraction) {
       await commitTurn(seat, round, result);
@@ -598,8 +660,11 @@ async function sendTo(
       result?.failure ?? 'driver-error',
       result?.detail ?? 'no detail',
       result?.diagnostics,
+      before,
     );
-    if (action !== 'retry') return action === 'abort' ? 'aborted' : 'dropped';
+    if (action === 'abort') return 'aborted';
+    if (action === 'drop') return 'dropped';
+    recheckOnly = action === 'recheck';
   }
 }
 
@@ -641,6 +706,7 @@ async function recordAttempt(
   attempt: number,
   prompt: string,
   result: DriveResult | undefined,
+  mode: 'send' | 'recheck' = 'send',
 ): Promise<void> {
   await appendRecord({
     at: new Date().toISOString(),
@@ -649,6 +715,7 @@ async function recordAttempt(
     displayName: seat.displayName,
     providerId: seat.providerId,
     attempt,
+    mode,
     outcome: result?.ok ? 'ok' : 'failed',
     failure: result?.failure,
     detail: result?.detail,
@@ -736,7 +803,8 @@ async function raiseIncident(
   failure: Incident['failure'],
   detail: string,
   diagnostics?: Diagnostics,
-): Promise<'retry' | 'drop' | 'abort'> {
+  before?: TurnKey,
+): Promise<IncidentAction> {
   await updateSeat(seat.seatId, { status: 'failed', lastError: `${failure}: ${detail}` });
   await appendLog('error', `${seat.displayName} failed (${failure}): ${detail}`);
 
@@ -754,11 +822,15 @@ async function raiseIncident(
     failure,
     detail,
     at: new Date().toISOString(),
+    // Offered only when the prompt demonstrably went in. Without a baseline, a re-read would
+    // happily return the previous round's reply and the panel would trade stale content while
+    // looking repaired.
+    canRecheck: before !== undefined,
     diagnostics,
   };
   await patchRun({ status: 'paused', incident });
 
-  const action = await new Promise<'retry' | 'drop' | 'abort'>((resolve) => {
+  const action = await new Promise<IncidentAction>((resolve) => {
     incidentResolver = resolve;
   });
 

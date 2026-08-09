@@ -71,6 +71,28 @@
     setTimeout(() => (copied = false), 2500);
   }
 
+  /**
+   * "X stopped responding" was wrong for the commonest failure by far, which is a reply we
+   * read too early — the model had answered fine. Naming the fault accurately is what makes
+   * "Check again" the obvious button rather than "Try again".
+   */
+  const incidentHeadline = $derived.by(() => {
+    const i = run.incident;
+    if (!i) return '';
+    switch (i.failure) {
+      case 'implausible-response':
+      case 'extract-empty':
+        return `Couldn't read a complete reply from ${i.displayName} in round ${i.round}.`;
+      case 'prompt-echo':
+        return `${i.displayName} handed back our own prompt in round ${i.round}.`;
+      case 'window-minimized':
+      case 'tab-closed':
+        return `Can't reach ${i.displayName}'s tab in round ${i.round}.`;
+      default:
+        return `${i.displayName} stopped responding in round ${i.round}.`;
+    }
+  });
+
   const statusText: Record<RunState['status'], string> = {
     idle: 'Ready',
     running: 'Running',
@@ -98,7 +120,18 @@
       <span class="chip {run.status}">{statusText[run.status]}</span>
       {#if run.status === 'running' || run.status === 'paused'}
         <span class="data round">Round {run.round} / {run.config.maxRounds}</span>
-        <button onclick={() => send('MARK_CONVERGED')}>End after this round</button>
+        <!-- Armed, not fired. It takes effect minutes later, so the button has to keep
+             showing that it is still going to happen, and let you take it back. -->
+        <button
+          class:armed={run.endAfterRound}
+          aria-pressed={run.endAfterRound}
+          title={run.endAfterRound
+            ? 'The panel will wrap up once round ' + run.round + ' finishes. Click to keep going.'
+            : 'Finish after the current round, then write the closing summary.'}
+          onclick={() => send('MARK_CONVERGED', { on: !run.endAfterRound })}
+        >
+          {run.endAfterRound ? `Ending after round ${run.round} ✕` : 'End after this round'}
+        </button>
         <button class="danger" onclick={() => send('STOP_RUN')}>Stop</button>
       {:else if !showSetup}
         <button onclick={() => send('RESET_RUN')}>New panel</button>
@@ -114,14 +147,27 @@
          choices. Never degrade silently. -->
     <div class="incident" role="alert">
       <div>
-        <strong>{run.incident.displayName} stopped responding in round {run.incident.round}.</strong>
+        <strong>{incidentHeadline}</strong>
         <span class="data why">{run.incident.failure} — {run.incident.detail}</span>
+        {#if run.incident.canRecheck}
+          <!-- Ordering is the advice: re-reading is free and usually right, sending again
+               costs a message and buries the answer that is already on screen. -->
+          <span class="advice">
+            Give it a moment to finish, then <b>Read the page again</b> — nothing is sent.
+            <b>Send it again</b> posts the prompt a second time.
+          </span>
+        {/if}
       </div>
       <div class="acts">
+        {#if run.incident.canRecheck}
+          <button class="primary" onclick={() => send('RESOLVE_INCIDENT', { action: 'recheck' })}>
+            Read the page again
+          </button>
+        {/if}
         {#if run.incident.diagnostics}
           <button onclick={copyDiagnostics}>{copied ? 'Copied' : 'Copy page details'}</button>
         {/if}
-        <button onclick={() => send('RESOLVE_INCIDENT', { action: 'retry' })}>Try again</button>
+        <button onclick={() => send('RESOLVE_INCIDENT', { action: 'retry' })}>Send it again</button>
         <button onclick={() => send('RESOLVE_INCIDENT', { action: 'drop' })}>Continue without it</button>
         <button class="danger" onclick={() => send('RESOLVE_INCIDENT', { action: 'abort' })}>Stop the panel</button>
       </div>
@@ -176,6 +222,13 @@
   .chip.error, .chip.aborted { color: var(--contest); border-color: #4a2b2b; }
   .round { color: var(--ink-faint); }
 
+  /* An armed intention reads as a held switch, not a pressed button. */
+  :global(button.armed) {
+    color: var(--open);
+    border-color: var(--open);
+    background: color-mix(in srgb, var(--open) 12%, transparent);
+  }
+
   .incident {
     display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
     background: #2a1f1d; border: 1px solid #5a3330; border-left: 3px solid var(--contest);
@@ -183,6 +236,8 @@
   }
   .incident strong { display: block; font-weight: 600; }
   .why { display: block; color: var(--ink-dim); margin-top: 3px; font-size: 12px; }
+  .advice { display: block; color: var(--ink-dim); margin-top: 7px; font-size: 12px; max-width: 62ch; }
+  .advice b { color: var(--ink); font-weight: 600; }
   .acts { display: flex; gap: 8px; flex-wrap: wrap; }
   .boot { color: var(--ink-faint); }
 </style>

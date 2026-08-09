@@ -84,10 +84,25 @@ export type DriveFailure =
   | 'prompt-echo'
   | 'driver-error';
 
+/**
+ * Identity of the newest assistant turn at some moment — a count would be wrong, see
+ * `turnView` in lib/driver.ts. Carried out of the page so a later re-read can be scoped:
+ * "the newest turn, but not the one that was already newest before we sent".
+ */
+export interface TurnKey {
+  selector: string | null;
+  key: string | null;
+}
+
 export interface DriveResult {
   ok: boolean;
   failure?: DriveFailure;
   detail?: string;
+  /**
+   * The newest turn as it stood before we sent. Returned on success and on failure so the
+   * orchestrator can re-read the page later without sending anything again.
+   */
+  before?: TurnKey;
   /** Non-fatal oddity worth recording, e.g. the composer read back empty after injection. */
   warning?: string;
   /**
@@ -180,6 +195,15 @@ export type ConvergenceStrategy = 'self-report' | 'moderator' | 'manual';
 
 export type RunStatus = 'idle' | 'running' | 'paused' | 'done' | 'aborted' | 'error';
 
+/**
+ * What to do about a failed seat.
+ *
+ * 'recheck' exists because the commonest failure is not a model that stopped — it is a reply
+ * we read too early. Sending again costs a message, pollutes the thread, and throws away an
+ * answer that is already on screen; re-reading the page costs nothing.
+ */
+export type IncidentAction = 'recheck' | 'retry' | 'drop' | 'abort';
+
 export interface Incident {
   seatId: string;
   displayName: string;
@@ -187,6 +211,12 @@ export interface Incident {
   failure: DriveFailure | 'window-minimized' | 'tab-closed';
   detail: string;
   at: string;
+  /**
+   * Whether the prompt is known to have gone in, so re-reading the page is meaningful. False
+   * when we never got as far as sending — there, "check again" could only return the previous
+   * round's reply, which would corrupt the panel while looking like a fix.
+   */
+  canRecheck: boolean;
   /**
    * Candidate selectors captured from the failing page. Carried all the way to the UI so a
    * failure is directly actionable — a broken adapter is fixed from this, not from guessing.
@@ -216,6 +246,8 @@ export interface TurnRecord {
   displayName: string;
   providerId: string;
   attempt: number;
+  /** 'recheck' re-read the page without sending anything — the prompt went in earlier. */
+  mode: 'send' | 'recheck';
   outcome: 'ok' | 'failed';
   failure?: string;
   detail?: string;
@@ -270,6 +302,13 @@ export interface RunState {
   pendingSteer: string | null;
   /** True while the run is holding at a round boundary waiting for you. */
   awaitingSteer: boolean;
+  /**
+   * Armed intentions for the end of the current round, held in state rather than in the
+   * worker's memory so the console can show them and take them back. A button that changes
+   * nothing visible is indistinguishable from a button that did not register.
+   */
+  endAfterRound: boolean;
+  pauseAfterRound: boolean;
   startedAt: string | null;
   finishedAt: string | null;
 }
@@ -304,6 +343,13 @@ export interface Diagnostics {
    * Contains the user's own conversation text — it goes to the clipboard, never off-device.
    */
   conversationHtml?: string;
+  /**
+   * Markup of the block around the composer — the send and stop controls, whatever they are
+   * made of. Kimi's send control is neither a <button> nor a [role="button"], so no amount of
+   * sketching buttons will ever find it; three separate captures failed to show it. Markup
+   * shows it. Contains no conversation text.
+   */
+  composerHtml?: string;
   note: string;
 }
 
@@ -325,12 +371,13 @@ export interface CandidateTab {
 export type BgMessage =
   | { type: 'LIST_TABS' }
   | { type: 'START_RUN'; config: RunConfig; seats: Array<Omit<Seat, 'status'>> }
-  | { type: 'RESOLVE_INCIDENT'; action: 'retry' | 'drop' | 'abort' }
+  | { type: 'RESOLVE_INCIDENT'; action: IncidentAction }
   | { type: 'STOP_RUN' }
-  | { type: 'MARK_CONVERGED' }
+  /** `on: false` takes the intention back — both of these are armed, not fired. */
+  | { type: 'MARK_CONVERGED'; on?: boolean }
   | { type: 'RESET_RUN' }
   | { type: 'QUEUE_STEER'; text: string }
-  | { type: 'PAUSE_AFTER_ROUND' }
+  | { type: 'PAUSE_AFTER_ROUND'; on?: boolean }
   | { type: 'RESUME_RUN' }
   | { type: 'CHECK_ADAPTERS' }
   | { type: 'DIAGNOSE_TAB'; tabId: number };

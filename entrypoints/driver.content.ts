@@ -28,7 +28,15 @@ export default defineContentScript({
 
       // Parallel mode splits a turn: submit to every seat first so they all generate at
       // once, then harvest each. Serial mode uses DRIVE, which is both phases back to back.
-      if (msg?.type === 'DRIVE_SUBMIT' || msg?.type === 'DRIVE_AWAIT') {
+      //
+      // DRIVE_RECHECK is a harvest with no submit behind it — the prompt went in earlier and
+      // we read the page too soon. Identical work to DRIVE_AWAIT; named separately so the
+      // flight recorder shows a re-read rather than a phantom second turn.
+      if (
+        msg?.type === 'DRIVE_SUBMIT' ||
+        msg?.type === 'DRIVE_AWAIT' ||
+        msg?.type === 'DRIVE_RECHECK'
+      ) {
         const a = ADAPTERS_BY_ID[msg.providerId];
         if (!a) {
           sendResponse({ ok: false, failure: 'driver-error', detail: 'no adapter', timings: {} });

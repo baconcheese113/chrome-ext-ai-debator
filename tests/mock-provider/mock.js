@@ -15,8 +15,11 @@
  *   ?mode=slow        long mid-stream pauses, to attack false-positive completion
  *   ?mode=stuck-stop  replies in full but leaves the stop button visible forever (real Claude)
  *   ?mode=virtualized unmounts off-screen turns into empty placeholders          (real ChatGPT)
+ *   ?mode=thinking    posts a short "Thinking" header, shows NO stop button, then holds the
+ *                     DOM completely static before writing the real answer      (real Kimi)
  *
  *   &words=N          length of the generated reply (default 220)
+ *   &thinkms=N        length of the silent reasoning gap in `thinking` mode (default 9000)
  *   &speed=N          ms between chunks (default 20)
  *   &converge=yes|no  value of the CONVERGED footer (default no)
  */
@@ -26,6 +29,7 @@ const mode = params.get('mode') ?? 'normal';
 const words = Number(params.get('words') ?? 220);
 const speed = Number(params.get('speed') ?? 20);
 const converge = params.get('converge') ?? 'no';
+const thinkMs = Number(params.get('thinkms') ?? 9000);
 
 const thread = document.getElementById('thread');
 const composer = document.getElementById('composer');
@@ -108,10 +112,24 @@ async function stream(el, text) {
 async function respond(prompt) {
   if (mode === 'silent') return;
 
-  if (mode !== 'no-stop') stopBtn.hidden = false;
+  // 'thinking' hides the stop button on purpose: that is the Kimi shape exactly — a real
+  // stop control exists but our adapter does not know its selector, so silence is the only
+  // signal the driver has, and the model is about to be silent for a long time.
+  if (mode !== 'no-stop' && mode !== 'thinking') stopBtn.hidden = false;
   sendBtn.disabled = true;
 
   const full = `${body(prompt)}\nCONVERGED: ${converge} — mock reason`;
+
+  if (mode === 'thinking') {
+    // A reasoning model's header lands immediately and is plausible-looking but far too
+    // short. Then nothing at all happens — no stream, no spinner, no mutation — until the
+    // answer starts. Reading during that gap yields a confident fragment.
+    const msg = append('assistant', 'Thinking…');
+    await sleep(thinkMs);
+    await stream(msg, `\n${full}`);
+    sendBtn.disabled = false;
+    return;
+  }
 
   if (mode === 'artifact') {
     // The thread gets a summary; the answer goes somewhere the naive extractor can't see.

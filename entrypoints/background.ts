@@ -42,7 +42,7 @@ export default defineBackground(() => {
         return false;
 
       case 'MARK_CONVERGED':
-        markConverged();
+        markConverged(msg.on ?? true);
         sendResponse({ ok: true });
         return false;
 
@@ -59,7 +59,7 @@ export default defineBackground(() => {
         return true;
 
       case 'PAUSE_AFTER_ROUND':
-        pauseAfterRound();
+        pauseAfterRound(msg.on ?? true);
         sendResponse({ ok: true });
         return false;
 
