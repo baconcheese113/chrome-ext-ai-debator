@@ -380,4 +380,6 @@ export type BgMessage =
   | { type: 'PAUSE_AFTER_ROUND'; on?: boolean }
   | { type: 'RESUME_RUN' }
   | { type: 'CHECK_ADAPTERS' }
-  | { type: 'DIAGNOSE_TAB'; tabId: number };
+  | { type: 'DIAGNOSE_TAB'; tabId: number }
+  /** Arms a capture in the tab; it fires by itself once the model starts answering. */
+  | { type: 'DIAGNOSE_WHEN_BUSY'; tabId: number; providerId: string };

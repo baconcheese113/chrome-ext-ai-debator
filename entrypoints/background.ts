@@ -73,10 +73,14 @@ export default defineBackground(() => {
         return true;
 
       case 'DIAGNOSE_TAB':
-        void chrome.tabs
-          .sendMessage(msg.tabId, { type: 'DIAGNOSE' })
-          .then(sendResponse)
-          .catch((err) => sendResponse({ error: String(err) }));
+        void diagnoseTab(msg.tabId, { type: 'DIAGNOSE' }).then(sendResponse);
+        return true;
+
+      case 'DIAGNOSE_WHEN_BUSY':
+        void diagnoseTab(msg.tabId, {
+          type: 'DIAGNOSE_WHEN_BUSY',
+          providerId: msg.providerId,
+        }).then(sendResponse);
         return true;
 
       default:
@@ -84,6 +88,31 @@ export default defineBackground(() => {
     }
   });
 });
+
+/**
+ * Ask a tab for a capture, injecting the content script first if the tab predates us.
+ *
+ * The keepalive matters for the armed variant: it can sit for a minute and a half waiting for
+ * a model to start answering, and MV3 will otherwise shut the worker down underneath it.
+ */
+async function diagnoseTab(tabId: number, msg: object): Promise<unknown> {
+  const keepalive = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
+  try {
+    try {
+      return await chrome.tabs.sendMessage(tabId, msg);
+    } catch {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content-scripts/driver.js'],
+      });
+      return await chrome.tabs.sendMessage(tabId, msg);
+    }
+  } catch (err) {
+    return { error: `Could not reach this tab: ${String(err)}. Reload it and try again.` };
+  } finally {
+    clearInterval(keepalive);
+  }
+}
 
 /**
  * Read-only audit of every open provider tab. Sends nothing to any model, so it costs no

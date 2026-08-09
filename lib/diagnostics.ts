@@ -60,9 +60,18 @@ function captureConversationHtml(): string | undefined {
     document.body;
   if (!root) return undefined;
   const html = (root as HTMLElement).outerHTML ?? '';
-  return html.length > HTML_BUDGET
-    ? `${html.slice(0, HTML_BUDGET)}\n<!-- truncated at ${HTML_BUDGET} chars -->`
-    : html;
+  if (html.length <= HTML_BUDGET) return html;
+
+  // Keep both ends. Taking the first N characters kept only the OLDEST turns and cut the
+  // newest — and the newest turn is the one every extraction question is about. The head
+  // still shows the container structure the selectors have to match.
+  const head = Math.floor(HTML_BUDGET / 3);
+  const tail = HTML_BUDGET - head;
+  return [
+    html.slice(0, head),
+    `\n<!-- ${html.length - HTML_BUDGET} chars omitted from the middle -->\n`,
+    html.slice(-tail),
+  ].join('');
 }
 
 function composerCandidates(): ElementSketch[] {
@@ -88,27 +97,59 @@ const CONTROL_WORDS = /\b(send|stop|submit|cancel|halt)\b/i;
  * controls that matter — which is exactly what a real ChatGPT capture did, and why Kimi's
  * send button has stayed invisible to us across several rounds of debugging.
  */
+/** Anything that could plausibly be a send or stop control, however it is built. */
+const CONTROLISH =
+  'button, [role="button"], svg, [class*="btn" i], [class*="send" i], [class*="stop" i], [class*="submit" i]';
+/**
+ * Text length that says we have climbed out of the composer and into the conversation.
+ *
+ * A fixed number of levels does not work. Kimi's composer sits six levels below a container
+ * holding the entire thread, so climbing blind rooted the capture at 40,000 characters of
+ * conversation and truncated before ever reaching the send control — the exact thing the
+ * capture existed to show.
+ */
+const REGION_TEXT_LIMIT = 3000;
+
 function composerRegions(): Element[] {
-  const out: Element[] = [];
   const composers = dedupe([
     ...deepQueryAll('textarea'),
     ...deepQueryAll('[contenteditable="true"]'),
     ...deepQueryAll('[role="textbox"]'),
   ]).filter(isVisible);
 
-  for (const c of composers) {
-    const form = c.closest?.('form');
-    if (form) {
-      out.push(form);
-      continue;
+  return dedupe(composers.map(regionFor));
+}
+
+/** The smallest block containing the composer and the controls that sit beside it. */
+function regionFor(composer: Element): Element {
+  const small = (el: Element) => (el.textContent?.length ?? 0) <= REGION_TEXT_LIMIT;
+
+  // Providers that use a form have already drawn this boundary for us.
+  const form = composer.closest?.('form');
+  if (form && small(form)) return form;
+
+  let node: Element = composer;
+  let sawControl = false;
+
+  for (let depth = 0; depth < 8; depth++) {
+    const parent = node.parentElement;
+    if (!parent || parent === document.body || parent === document.documentElement) break;
+    if (!small(parent)) break;
+    node = parent;
+
+    // Controls inside the composer itself don't count — an icon in the text box is not a
+    // send button, and stopping on one would leave the real control outside the capture.
+    const controls = Array.from(node.querySelectorAll(CONTROLISH)).filter(
+      (e) => e !== composer && !composer.contains(e),
+    );
+    if (controls.length) {
+      // One more level of margin: a send control is sometimes a sibling of the toolbar row
+      // rather than inside it, and a level here is cheap.
+      if (sawControl) break;
+      sawControl = true;
     }
-    // No form to anchor on, so climb a fixed distance. Six levels reliably clears the
-    // toolbar row that holds send/stop without swallowing the whole page.
-    let node: Element = c;
-    for (let depth = 0; depth < 6 && node.parentElement; depth++) node = node.parentElement;
-    out.push(node);
   }
-  return out;
+  return node;
 }
 
 function buttonCandidates(): ElementSketch[] {

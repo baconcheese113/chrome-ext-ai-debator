@@ -157,3 +157,38 @@ test('Diagnose copies candidate selectors for a seated tab', async ({ context, d
   await row.getByRole('button', { name: 'Diagnose' }).click();
   await expect(row.getByRole('button', { name: 'Copied' })).toBeVisible();
 });
+
+test('an armed capture fires by itself once the model starts answering', async ({ context, dashboard }) => {
+  // Three real captures in a row came back without a send or stop button, because those
+  // controls only exist for the seconds a model is generating and a hand-timed Diagnose
+  // cannot reliably land there. The page has to watch for itself.
+  const tab = await openMockTab(context, 'mode=normal&words=200&speed=25');
+  await dashboard.bringToFront();
+  await dashboard.getByRole('button', { name: 'Rescan' }).click();
+
+  const row = dashboard.locator('li').filter({ hasText: 'MOCK' }).first();
+  await row.getByRole('button', { name: 'Catch it answering' }).click();
+  await expect(row.getByRole('button', { name: 'Waiting…' })).toBeVisible();
+
+  // It must be waiting on the page, not on a timer. Nothing has been sent, so nothing may
+  // have been captured — a fixed delay would satisfy every other assertion here by accident.
+  await dashboard.waitForTimeout(4000);
+  await expect(dashboard.locator('.held')).toHaveCount(0);
+
+  // Now do what a person would do: go to the tab and send it something.
+  await tab.bringToFront();
+  await tab.locator('#composer').fill('hi');
+  await tab.getByTestId('send-button').click();
+
+  await dashboard.bringToFront();
+  const held = dashboard.locator('.held');
+  await expect(held).toBeVisible({ timeout: 30_000 });
+  await expect(held).toContainText('while the model was answering');
+
+  // The capture has to contain the control we came for. The mock's stop button exists only
+  // while generating, so this asserts the timing landed — not merely that a capture happened.
+  // Read from the rendered summary rather than the clipboard: extension pages are refused
+  // clipboard READ access, which is also why the capture is held instead of auto-copied.
+  await expect(held).toContainText('including a stop control');
+  await expect(held).toContainText('composer markup');
+});

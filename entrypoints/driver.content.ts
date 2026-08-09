@@ -1,6 +1,6 @@
 import { ADAPTERS, ADAPTERS_BY_ID } from '../lib/adapters';
 import { collectDiagnostics } from '../lib/diagnostics';
-import { awaitTurn, drive, submitTurn } from '../lib/driver';
+import { awaitTurn, diagnoseWhenBusy, drive, submitTurn } from '../lib/driver';
 import { checkAdapter } from '../lib/selector-check';
 import type { DriveResult } from '../lib/types';
 
@@ -18,6 +18,20 @@ export default defineContentScript({
       if (msg?.type === 'DIAGNOSE') {
         sendResponse(collectDiagnostics('requested from dashboard'));
         return false;
+      }
+
+      // Armed capture: sit here until the page starts answering, then photograph it. The
+      // controls we most need to see only exist while a model is generating.
+      if (msg?.type === 'DIAGNOSE_WHEN_BUSY') {
+        const adapter = ADAPTERS_BY_ID[msg.providerId];
+        if (!adapter) {
+          sendResponse({ error: `no adapter for "${msg.providerId}"` });
+          return false;
+        }
+        diagnoseWhenBusy(adapter)
+          .then(sendResponse)
+          .catch((err) => sendResponse({ error: String(err) }));
+        return true;
       }
 
       if (msg?.type === 'CHECK_ADAPTER') {

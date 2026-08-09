@@ -511,6 +511,46 @@ function stopSignal(adapter: ProviderAdapter): string | null {
   return anyVisible(adapter.generating.stopSelectors) ?? anyVisible(GENERIC_STOP_SELECTORS);
 }
 
+/**
+ * Arm a capture and take it once the page starts answering.
+ *
+ * Some controls only exist for the seconds a model is generating — the stop button above all.
+ * Asking someone to send a prompt and then reach a Diagnose button in another tab before the
+ * model finishes is a stopwatch, not a workflow, and three captures in a row have come back
+ * without the control we needed. So the page watches for itself.
+ *
+ * The trigger deliberately does NOT depend on knowing the stop selector, since not knowing it
+ * is the reason we are here. A new turn appearing, or the page simply gaining text, is enough.
+ */
+export async function diagnoseWhenBusy(
+  adapter: ProviderAdapter,
+  timeoutMs = 90_000,
+): Promise<Diagnostics> {
+  const mainText = () =>
+    (document.querySelector('main') ?? document.body)?.textContent?.length ?? 0;
+
+  const baselineKey = lastTurnKey(adapter).key;
+  const baselineLen = mainText();
+  const deadline = performance.now() + timeoutMs;
+
+  while (performance.now() < deadline) {
+    await sleep(250);
+    const started =
+      lastTurnKey(adapter).key !== baselineKey ||
+      stopSignal(adapter) !== null ||
+      mainText() - baselineLen > 40;
+
+    if (started) {
+      // Let the composer swap into its generating state before photographing it.
+      await sleep(1500);
+      return collectDiagnostics('captured while the model was answering');
+    }
+  }
+  return collectDiagnostics(
+    'armed, but the page never started answering within the time limit — captured as-is',
+  );
+}
+
 /** The tightest element containing the conversation turns, so unrelated UI is ignored. */
 function conversationRoot(adapter: ProviderAdapter): Node {
   for (const sel of adapter.response.selectors) {
