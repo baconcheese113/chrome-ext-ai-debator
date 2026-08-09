@@ -109,6 +109,21 @@ test('works when the provider virtualizes the thread', async ({ page }) => {
   expect(second.extraction!.text).not.toContain('Reply #1.');
 });
 
+test('tells turns apart when they share an ancestor id and repeat identical text', async ({ page }) => {
+  // Real Claude, exactly. Turns carry no id of their own, so an unbounded closest() walk
+  // resolved every one of them to a page-level data-testid — making "has the newest turn
+  // changed?" permanently false. And the narrator legitimately replies "READY" twice, so a
+  // text fingerprint cannot separate them either. Only aria-posinset can.
+  await open(page, 'mode=shared-id&words=0&speed=1');
+
+  const first = await run(page, mockProvider, 10);
+  expect(first.ok).toBe(true);
+
+  const second = await run(page, mockProvider, 10);
+  expect(second.ok).toBe(true);
+  expect(second.failure).toBeUndefined();
+});
+
 test('reads the artifact when the thread holds only a summary', async ({ page }) => {
   await open(page, 'mode=artifact&words=150&speed=5');
   const res = await run(page);

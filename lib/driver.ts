@@ -244,25 +244,63 @@ export interface TurnKey {
   key: string | null;
 }
 
-/** Prefer a real id; fall back to a text fingerprint when the provider exposes none. */
-function signatureOf(el: HTMLElement): string {
-  const attrs = ['data-message-id', 'data-turn-id', 'data-testid'];
-  for (const a of attrs) {
-    const own = el.getAttribute(a);
-    if (own) return `${a}=${own}`;
-    const near = el.closest(`[${a}]`)?.getAttribute(a);
-    if (near) return `${a}=${near}`;
+/**
+ * Attributes that identify a turn, best first.
+ *
+ * `aria-posinset` is here because Claude exposes no per-message id at all — its turns are
+ * only distinguished by their position in the `role="article"` list. `data-testid` is last
+ * because it is the most likely to belong to a container rather than a turn.
+ */
+const TURN_ID_ATTRS = ['data-message-id', 'data-turn-id', 'aria-posinset', 'data-testid'];
+
+/** How far up to look. Beyond this we are reading page furniture, not the turn. */
+const ANCESTOR_LIMIT = 6;
+
+function attrSignature(el: HTMLElement): string | null {
+  for (const a of TURN_ID_ATTRS) {
+    let node: HTMLElement | null = el;
+    for (let depth = 0; node && depth <= ANCESTOR_LIMIT; depth++, node = node.parentElement) {
+      const v = node.getAttribute(a);
+      if (v) return `${a}=${v}`;
+    }
   }
-  return `text=${readText(el).slice(0, 160)}`;
+  return null;
+}
+
+const textSignature = (el: HTMLElement) => `text=${readText(el).slice(0, 160)}`;
+
+interface TurnView {
+  selector: string | null;
+  els: HTMLElement[];
+  keys: string[];
+}
+
+/**
+ * Turns and their identities, with the identity scheme validated against the page.
+ *
+ * An unbounded `closest()` walk once resolved every Claude turn to the same page-level
+ * `data-testid`, so "has the newest turn changed?" was permanently false and Claude looked
+ * like it had stopped replying when it had not. Rather than trust a scheme, this checks it:
+ * if the attributes do not yield a distinct key per turn, they are not identifying turns,
+ * and it falls back to text.
+ */
+function turnView(adapter: ProviderAdapter): TurnView {
+  for (const sel of adapter.response.selectors) {
+    const els = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
+    if (!els.length) continue;
+
+    const attrs = els.map(attrSignature);
+    const usable =
+      attrs.every((k): k is string => k !== null) && new Set(attrs).size === els.length;
+
+    return { selector: sel, els, keys: usable ? (attrs as string[]) : els.map(textSignature) };
+  }
+  return { selector: null, els: [], keys: [] };
 }
 
 function lastTurnKey(adapter: ProviderAdapter): TurnKey {
-  for (const sel of adapter.response.selectors) {
-    const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
-    const el = matches[matches.length - 1];
-    if (el) return { selector: sel, key: signatureOf(el) };
-  }
-  return { selector: null, key: null };
+  const view = turnView(adapter);
+  return { selector: view.selector, key: view.keys[view.keys.length - 1] ?? null };
 }
 
 function findComposer(adapter: ProviderAdapter): HTMLElement | undefined {
@@ -404,9 +442,9 @@ function extract(adapter: ProviderAdapter, excludeKey: string | null): TurnExtra
   const o = adapter.overrides?.extract?.(adapter);
   if (o) return o;
 
-  const fromMessage = pickLast(adapter.response.selectors, excludeKey);
+  const fromMessage = pickNewest(turnView(adapter), excludeKey);
   // Artifacts are a separate panel, not part of the turn sequence, so no identity guard.
-  const fromArtifact = pickLast(adapter.artifact?.selectors ?? [], null);
+  const fromArtifact = pickLast(adapter.artifact?.selectors ?? []);
 
   // Prefer whichever actually holds the content. Claude in Cowork puts a 278-char summary in
   // the thread and the real answer in the artifact, so "message exists" is not enough —
@@ -426,19 +464,30 @@ function extract(adapter: ProviderAdapter, excludeKey: string | null): TurnExtra
  * that is sitting right there. Walking back finds it. The floor is what stops that walk from
  * quietly returning the previous round's turn, which would corrupt the panel invisibly.
  */
-function pickLast(
-  selectors: string[],
+/** Newest turn with text, never reaching back into the turn that predates our send. */
+function pickNewest(
+  view: TurnView,
   excludeKey: string | null,
 ): { text: string; html: string } | undefined {
+  for (let i = view.els.length - 1; i >= 0; i--) {
+    const el = view.els[i]!;
+    // Walking back past an empty trailing node is necessary — ChatGPT's canvas leaves one.
+    // Walking back INTO the turn that was already newest before we sent would hand back the
+    // previous round's reply, so stop there.
+    if (excludeKey !== null && view.keys[i] === excludeKey) break;
+    const text = readText(el);
+    if (text.trim().length > 0) return { text, html: el.innerHTML };
+  }
+  return undefined;
+}
+
+/** Last element with text across the given selectors. Used for artifact panels. */
+function pickLast(selectors: string[]): { text: string; html: string } | undefined {
   for (const sel of selectors) {
     const matches = deepQueryAll(sel).filter(isVisible) as HTMLElement[];
     for (let i = matches.length - 1; i >= 0; i--) {
       const el = matches[i];
       if (!el) continue;
-      // Walking back past an empty trailing node is necessary — ChatGPT's canvas leaves one.
-      // Walking back INTO the turn that was already newest before we sent would hand back
-      // the previous round's reply, so stop there.
-      if (excludeKey !== null && signatureOf(el) === excludeKey) break;
       const text = readText(el);
       if (text.trim().length > 0) return { text, html: el.innerHTML };
     }

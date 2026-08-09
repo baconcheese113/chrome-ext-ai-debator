@@ -62,9 +62,19 @@ function append(cls, text) {
   if (cls === 'assistant') el.dataset.role = 'assistant';
   // A stable per-turn id, as every real provider exposes. The driver keys turn identity off
   // this, which is what makes it immune to virtualization.
-  el.dataset.msgId = `m${++msgSeq}`;
+  msgSeq++;
+  // 'shared-id' reproduces real Claude: turns carry no id of their own, every ancestor
+  // attribute is shared page furniture, and consecutive replies can be byte-identical
+  // ("READY" twice). Identity has to come from aria-posinset, and a scheme that yields the
+  // same key for every turn must be detected and rejected rather than trusted.
+  if (mode !== 'shared-id') el.dataset.msgId = `m${msgSeq}`;
   el.textContent = text;
-  thread.appendChild(el);
+
+  const article = document.createElement('div');
+  article.setAttribute('role', 'article');
+  article.setAttribute('aria-posinset', String(msgSeq));
+  article.appendChild(el);
+  thread.appendChild(article);
 
   // Real ChatGPT swaps off-screen turns for empty placeholder divs, so the number of
   // rendered assistant messages stops growing with the conversation — it stays flat or
