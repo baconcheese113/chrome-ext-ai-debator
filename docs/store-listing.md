@@ -126,15 +126,21 @@ Firefox `data_collection_permissions` is declared in the manifest as `{"required
 | Store icon | 128×128 | `public/icon/128.png` |
 | Master icon | 1024×1024 | `store-assets/icon-master-1024.png` |
 | Small promo tile | 440×280 | `store-assets/promo-small-440x280.png` |
-| Screenshots | 1280×800, 1–5 | **still needed** |
+| Screenshots | 1280×800 | `store-assets/screenshots/1-3*.png` |
 
-Screenshots worth taking, in order of how well they explain the product:
+Upload in filename order. The numbering is the argument, not just a sort key:
 
-1. A running panel with a narrator summary open — the whole idea in one frame.
-2. The steering box with a note queued for the next round.
-3. The closing summary at the end of a run.
-4. The setup screen with several tabs seated and Check adapters green.
-5. An incident banner, showing the failure policy is deliberate rather than a crash.
+1. **`1-panel-running.png`** — a live panel with the narrator's plain-language summary and the
+   Agreed / Contested / Unresolved columns. One frame that contains the entire idea.
+2. **`2-closing-summary.png`** — the closing account. This is what the user actually keeps.
+3. **`3-seat-the-panel.png`** — setup, which answers "what do I have to do" once someone
+   already wants it. Never first: it shows configuration rather than value.
+
+Worth adding later, if a run produces good ones: the steering box with a note queued, and an
+incident banner — the latter shows the failure policy is deliberate rather than a crash.
+
+`scripts/fit-screenshot.ps1` conforms any image to an exact store size, padding rather than
+cropping so no control is lost.
 
 ---
 
