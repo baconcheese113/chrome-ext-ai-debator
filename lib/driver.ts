@@ -46,7 +46,11 @@ const STALE_STOP_DEFAULT_MS = 120_000;
  *
  * The honest response to these two failures is not to fail, it is to look again after longer.
  */
-const SETTLE_RETRYABLE: readonly DriveFailure[] = ['implausible-response', 'extract-empty'];
+const SETTLE_RETRYABLE: readonly DriveFailure[] = [
+  'implausible-response',
+  'incomplete-reply',
+  'extract-empty',
+];
 
 /**
  * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
@@ -279,6 +283,18 @@ function validate(extraction: TurnExtraction, req: DriveRequest): void {
     raise(
       'implausible-response',
       `only ${text.length} chars, expected at least ${req.minChars} — likely truncated`,
+    );
+  }
+
+  // The end of the reply is the only thing whose absence proves we did not get all of it.
+  // A length floor cannot: Kimi cleared it with 968 characters that stopped mid-word, every
+  // round of every run, and the panel recorded the fragment as its contribution.
+  if (req.requireTail && !text.includes(req.requireTail)) {
+    const tail = text.slice(-60).replace(/\s+/g, ' ');
+    raise(
+      'incomplete-reply',
+      `${text.length} chars, but the closing "${req.requireTail}" line is missing — ` +
+        `this stops at "…${tail}", so it is a fragment rather than the whole reply`,
     );
   }
 }

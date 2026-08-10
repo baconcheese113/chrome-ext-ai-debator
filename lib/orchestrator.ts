@@ -34,6 +34,14 @@ const MIN_NARRATOR_CHARS = 40;
 const MIN_ACK_CHARS = 3;
 /** A closing account is long by nature; anything shorter is a refusal or a stub. */
 const MIN_SUMMARY_CHARS = 300;
+/**
+ * Every participant is told to end its reply with this line. Its absence is the only reliable
+ * proof that we captured a fragment rather than the whole answer — length cannot tell us,
+ * because a believable-looking 968 characters can stop mid-word.
+ *
+ * Participants only. The narrator answers in JSON and never writes this.
+ */
+const PARTICIPANT_TAIL = 'CONVERGED';
 
 /**
  * Deliberate delays, isolated so tests can zero them. Without this, orchestrator tests spend
@@ -465,6 +473,7 @@ async function runRoundParallel(
         providerId: seat.providerId,
         prompt: prompts.get(seat.seatId)!,
         minChars: MIN_REPLY_CHARS,
+        requireTail: PARTICIPANT_TAIL,
       });
       if (res?.ok) {
         submitted.set(seat.seatId, { before: res.before, warning: res.warning });
@@ -496,6 +505,8 @@ async function runRoundParallel(
           providerId: seat.providerId,
           prompt: prompts.get(seat.seatId)!,
           minChars: MIN_REPLY_CHARS,
+          // Every seat here is a participant, so all of them owe a CONVERGED line.
+          requireTail: PARTICIPANT_TAIL,
           before: pending.before,
           warning: pending.warning,
         })) as DriveResult;
@@ -580,6 +591,8 @@ async function sendTo(
   minChars: number,
   round: number,
 ): Promise<SendOutcome> {
+  // Participants must end with the CONVERGED line; the narrator answers in JSON.
+  const requireTail = seat.role === 'participant' ? PARTICIPANT_TAIL : undefined;
   let attempt = 0;
   /**
    * Set when the last incident was answered with "check again". The prompt is already in the
@@ -633,8 +646,8 @@ async function sendTo(
       result = (await chrome.tabs.sendMessage(
         seat.tabId,
         recheckOnly
-          ? { type: 'DRIVE_RECHECK', providerId: seat.providerId, prompt, minChars, before }
-          : { type: 'DRIVE', providerId: seat.providerId, prompt, minChars },
+          ? { type: 'DRIVE_RECHECK', providerId: seat.providerId, prompt, minChars, requireTail, before }
+          : { type: 'DRIVE', providerId: seat.providerId, prompt, minChars, requireTail },
       )) as DriveResult;
     } catch (err) {
       const action = await raiseIncident(seat, round, 'tab-closed', String(err), undefined, before);

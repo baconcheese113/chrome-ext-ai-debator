@@ -22,6 +22,12 @@ export default defineConfig({
       'https://chat.deepseek.com/*',
       ...(E2E ? ['http://localhost/*', 'http://127.0.0.1/*'] : []),
     ],
-    action: { default_title: 'AI Debator' },
+    action: {
+      default_title: 'AI Debator',
+      default_icon: {
+        16: 'icon/16.png',
+        32: 'icon/32.png',
+      },
+    },
   },
 });

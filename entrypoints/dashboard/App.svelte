@@ -83,6 +83,8 @@
       case 'implausible-response':
       case 'extract-empty':
         return `Couldn't read a complete reply from ${i.displayName} in round ${i.round}.`;
+      case 'incomplete-reply':
+        return `${i.displayName}'s round ${i.round} reply stops partway through.`;
       case 'prompt-echo':
         return `${i.displayName} handed back our own prompt in round ${i.round}.`;
       case 'window-minimized':

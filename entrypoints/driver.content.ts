@@ -56,7 +56,12 @@ export default defineContentScript({
           sendResponse({ ok: false, failure: 'driver-error', detail: 'no adapter', timings: {} });
           return false;
         }
-        const req = { providerId: msg.providerId, prompt: msg.prompt, minChars: msg.minChars };
+        const req = {
+          providerId: msg.providerId,
+          prompt: msg.prompt,
+          minChars: msg.minChars,
+          requireTail: msg.requireTail,
+        };
         const work =
           msg.type === 'DRIVE_SUBMIT'
             ? submitTurn(a, req)
@@ -78,7 +83,12 @@ export default defineContentScript({
           } satisfies DriveResult);
           return false;
         }
-        drive(adapter, { providerId: msg.providerId, prompt: msg.prompt, minChars: msg.minChars })
+        drive(adapter, {
+          providerId: msg.providerId,
+          prompt: msg.prompt,
+          minChars: msg.minChars,
+          requireTail: msg.requireTail,
+        })
           .then(sendResponse)
           .catch((err) =>
             sendResponse({

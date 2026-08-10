@@ -21,15 +21,21 @@ async function open(
   if (timeouts) await page.evaluate((t) => window.__driver.setTimeouts(t), timeouts);
 }
 
-function run(page: Page, adapter: ProviderAdapter = mockProvider, minChars = 120) {
+function run(
+  page: Page,
+  adapter: ProviderAdapter = mockProvider,
+  minChars = 120,
+  requireTail?: string,
+) {
   return page.evaluate(
-    ([a, prompt, min]) =>
+    ([a, prompt, min, tail]) =>
       window.__driver.drive(a as ProviderAdapter, {
         providerId: 'mock',
         prompt: prompt as string,
         minChars: min as number,
+        requireTail: tail as string | undefined,
       }),
-    [adapter, PROMPT, minChars] as const,
+    [adapter, PROMPT, minChars, requireTail] as const,
   ) as Promise<DriveResult>;
 }
 
@@ -179,6 +185,39 @@ test('without the settle re-look, the same page yields the thinking header', asy
   expect(res.ok).toBe(false);
   expect(res.failure).toBe('implausible-response');
   expect(res.extraction!.text).toContain('Thinking');
+});
+
+test('catches a long reply that stops before its closing line', async ({ page }) => {
+  // The failure that ran undetected for nine rounds of a real panel. Kimi returned 968
+  // believable characters that stopped mid-word — "…the missing layer is a **campaign" —
+  // cleared the 120-char floor, and was committed as that round's contribution, with its
+  // convergence vote silently absent. Length cannot see this; the missing closing line can.
+  await open(page, 'mode=no-footer&words=300&speed=2', { settleQuietMs: [] });
+  const res = await run(page, mockProvider, 120, 'CONVERGED');
+
+  expect(res.ok).toBe(false);
+  expect(res.failure).toBe('incomplete-reply');
+  // The rejected text is carried so the console can show what was actually read.
+  expect(res.extraction!.text.length).toBeGreaterThan(1000);
+});
+
+test('the same reply passes every length check, which is why length was not enough', async ({ page }) => {
+  // Without the closing-line check this page is indistinguishable from success. It is a long,
+  // fluent, entirely plausible answer. That is precisely what made the real defect invisible.
+  await open(page, 'mode=no-footer&words=300&speed=2', { settleQuietMs: [] });
+  const res = await run(page, mockProvider, 120);
+
+  expect(res.ok).toBe(true);
+  expect(res.extraction!.text.length).toBeGreaterThan(1000);
+});
+
+test('does not demand a closing line from a reply that was never asked for one', async ({ page }) => {
+  // The narrator answers in JSON and never writes a CONVERGED line. Requiring one of every
+  // seat would drop the narrator on every single run — a mistake this project has made before.
+  await open(page, 'mode=normal&words=90&speed=3');
+  const res = await run(page, mockProvider, 120);
+
+  expect(res.ok).toBe(true);
 });
 
 test('rejects a reply that is just our own prompt echoed back', async ({ page }) => {

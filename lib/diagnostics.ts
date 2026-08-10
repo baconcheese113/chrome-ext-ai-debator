@@ -54,7 +54,12 @@ const HTML_BUDGET = 120_000;
  * own conversation, and they should know that.
  */
 function captureConversationHtml(): string | undefined {
+  // Rooted at the turns themselves, not at <main>. Kimi has no <main>, so this fell back to
+  // <body> — whose first 120,000 characters are the conversation sidebar. Three captures in
+  // a row therefore contained no conversation markup at all, which is why the extraction bug
+  // in that markup went undiagnosed for as long as it did.
   const root =
+    turnsContainer() ??
     document.querySelector('main') ??
     document.querySelector('[role="main"]') ??
     document.body;
@@ -72,6 +77,15 @@ function captureConversationHtml(): string | undefined {
     `\n<!-- ${html.length - HTML_BUDGET} chars omitted from the middle -->\n`,
     html.slice(-tail),
   ].join('');
+}
+
+/**
+ * The element that holds the conversation turns, derived the same way the response-candidate
+ * scoring is: the common parent of the best-scoring repeated text blocks on the page.
+ */
+function turnsContainer(): Element | undefined {
+  const best = scoredResponseElements()[0];
+  return best?.parentElement ?? undefined;
 }
 
 function composerCandidates(): ElementSketch[] {
@@ -181,6 +195,11 @@ function buttonCandidates(): ElementSketch[] {
  * repeated sibling structures containing substantial text — the shape every chat log has.
  */
 function responseCandidates(): ElementSketch[] {
+  return scoredResponseElements().map(sketch).slice(0, 12);
+}
+
+/** Likely turn elements, best first. Shared with the conversation capture's rooting. */
+function scoredResponseElements(): Element[] {
   const scored: Array<{ el: Element; score: number }> = [];
   const all = deepQueryAll('div, article, section, li, message-content, model-response');
   for (const el of all) {
@@ -200,7 +219,7 @@ function responseCandidates(): ElementSketch[] {
     scored.push({ el, score: siblings * 10 + density });
   }
   scored.sort((a, b) => b.score - a.score);
-  return dedupe(scored.map((s) => s.el)).map(sketch).slice(0, 12);
+  return dedupe(scored.map((s) => s.el));
 }
 
 function dedupe(els: Element[]): Element[] {

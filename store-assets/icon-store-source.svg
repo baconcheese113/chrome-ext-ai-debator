@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">AI Debator store icon</title>
+  <desc id="desc">Three colored signal channels on a dark console tile.</desc>
+  <rect x="128" y="128" width="768" height="768" rx="132" fill="#171a21"/>
+  <rect x="284" y="392" width="108" height="300" fill="#4dd0e1"/>
+  <rect x="458" y="308" width="108" height="384" fill="#ff7a6b"/>
+  <rect x="632" y="464" width="108" height="228" fill="#f5b942"/>
+</svg>

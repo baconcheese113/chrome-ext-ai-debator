@@ -71,6 +71,17 @@ export interface DriveRequest {
   prompt: string;
   /** Minimum plausible reply length. Guards against the silent-truncation failure mode. */
   minChars: number;
+  /**
+   * A marker the finished reply must contain — in practice the CONVERGED footer every
+   * participant is told to end with.
+   *
+   * A length floor cannot catch a fragment: Kimi returned 968 believable characters that
+   * stopped mid-word ("…the missing layer is a **campaign"), cleared the 120-char floor, and
+   * was committed to the panel as that round's contribution — nine rounds running, with its
+   * convergence vote silently missing from every one. The end of the reply is the only thing
+   * whose absence proves we did not get all of it.
+   */
+  requireTail?: string;
 }
 
 export type DriveFailure =
@@ -81,6 +92,8 @@ export type DriveFailure =
   | 'detect-timeout'
   | 'extract-empty'
   | 'implausible-response'
+  /** Believable length, but the reply's own closing line is missing — a fragment. */
+  | 'incomplete-reply'
   | 'prompt-echo'
   | 'driver-error';
 

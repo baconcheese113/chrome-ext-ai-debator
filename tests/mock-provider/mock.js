@@ -17,6 +17,8 @@
  *   ?mode=virtualized unmounts off-screen turns into empty placeholders          (real ChatGPT)
  *   ?mode=thinking    posts a short "Thinking" header, shows NO stop button, then holds the
  *                     DOM completely static before writing the real answer      (real Kimi)
+ *   ?mode=no-footer   a long, believable reply that stops before its closing CONVERGED line
+ *                     and never resumes                                         (real Kimi)
  *
  *   &words=N          length of the generated reply (default 220)
  *   &thinkms=N        length of the silent reasoning gap in `thinking` mode (default 9000)
@@ -118,7 +120,12 @@ async function respond(prompt) {
   if (mode !== 'no-stop' && mode !== 'thinking') stopBtn.hidden = false;
   sendBtn.disabled = true;
 
-  const full = `${body(prompt)}\nCONVERGED: ${converge} — mock reason`;
+  // The failure that survived every length check we had: plenty of characters, cut before
+  // the closing line. Nine rounds of this were committed to a real panel as genuine turns.
+  const full =
+    mode === 'no-footer'
+      ? body(prompt)
+      : `${body(prompt)}\nCONVERGED: ${converge} — mock reason`;
 
   if (mode === 'thinking') {
     // A reasoning model's header lands immediately and is plausible-looking but far too
