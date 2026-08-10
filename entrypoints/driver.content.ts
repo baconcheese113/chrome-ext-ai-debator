@@ -65,7 +65,7 @@ export default defineContentScript({
         const work =
           msg.type === 'DRIVE_SUBMIT'
             ? submitTurn(a, req)
-            : awaitTurn(a, req, msg.before, {}, msg.warning);
+            : awaitTurn(a, req, msg.before, {}, msg.warning, msg.idleAction);
         work.then(sendResponse).catch((err) =>
           sendResponse({ ok: false, failure: 'driver-error', detail: String(err), timings: {} }),
         );

@@ -19,6 +19,8 @@
  *                     DOM completely static before writing the real answer      (real Kimi)
  *   ?mode=no-footer   a long, believable reply that stops before its closing CONVERGED line
  *                     and never resumes                                         (real Kimi)
+ *   ?mode=icon-only   no nameable stop control at all: one unlabelled icon button that swaps
+ *                     between send and stop, plus long silent gaps mid-reply     (real Kimi)
  *
  *   &words=N          length of the generated reply (default 220)
  *   &thinkms=N        length of the silent reasoning gap in `thinking` mode (default 9000)
@@ -32,6 +34,8 @@ const words = Number(params.get('words') ?? 220);
 const speed = Number(params.get('speed') ?? 20);
 const converge = params.get('converge') ?? 'no';
 const thinkMs = Number(params.get('thinkms') ?? 9000);
+/** Silent gap between chunks in `icon-only`. Must exceed the driver's quiescence threshold. */
+const gapMs = Number(params.get('gapms') ?? 7000);
 
 const thread = document.getElementById('thread');
 const composer = document.getElementById('composer');
@@ -102,7 +106,7 @@ async function stream(el, text) {
   for (let i = 0; i < chunks.length; i++) {
     el.textContent += (i ? ' ' : '') + chunks[i];
     // A long pause mid-stream is exactly what makes naive quiescence fire early.
-    if (mode === 'slow' && i === Math.floor(chunks.length / 2)) await sleep(2500);
+    if (mode === 'slow' && i === Math.floor(chunks.length / 2)) await sleep(gapMs);
     // Cut at a fixed, small number of chunks rather than a fraction, so the result is short
     // enough to be *detectably* truncated regardless of the configured length.
     if (mode === 'truncate' && i >= 5) return false;
@@ -117,7 +121,7 @@ async function respond(prompt) {
   // 'thinking' hides the stop button on purpose: that is the Kimi shape exactly — a real
   // stop control exists but our adapter does not know its selector, so silence is the only
   // signal the driver has, and the model is about to be silent for a long time.
-  if (mode !== 'no-stop' && mode !== 'thinking') stopBtn.hidden = false;
+  if (mode !== 'no-stop' && mode !== 'thinking' && mode !== 'icon-only') stopBtn.hidden = false;
   sendBtn.disabled = true;
 
   // The failure that survived every length check we had: plenty of characters, cut before
@@ -126,6 +130,31 @@ async function respond(prompt) {
     mode === 'no-footer'
       ? body(prompt)
       : `${body(prompt)}\nCONVERGED: ${converge} — mock reason`;
+
+  if (mode === 'icon-only') {
+    // Kimi's real composer: one unlabelled icon that becomes a stop square while writing.
+    // Nothing about it says "stop" — no aria-label, no test id, no text — so no selector we
+    // could write will ever find it. Only the fact that it *changed* is observable.
+    sendBtn.removeAttribute('data-testid');
+    sendBtn.removeAttribute('aria-label');
+    sendBtn.className = 'act-busy';
+    sendBtn.textContent = '■';
+
+    const msg = append('assistant', '');
+    // Long silent gaps mid-reply — longer than any amount of quiet we are willing to treat as
+    // "finished". Quiescence alone cannot survive this; the button state can.
+    for (const part of [full.slice(0, 60), full.slice(60, 200), full.slice(200)]) {
+      await sleep(gapMs);
+      msg.textContent += part;
+    }
+
+    sendBtn.className = 'act-send';
+    sendBtn.textContent = 'Send';
+    sendBtn.setAttribute('data-testid', 'send-button');
+    sendBtn.setAttribute('aria-label', 'Send message');
+    sendBtn.disabled = false;
+    return;
+  }
 
   if (mode === 'thinking') {
     // A reasoning model's header lands immediately and is plausible-looking but far too

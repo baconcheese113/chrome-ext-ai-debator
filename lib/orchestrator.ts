@@ -459,7 +459,10 @@ async function runRoundParallel(
   prompts: Map<string, string>,
   round: number,
 ): Promise<RoundResult> {
-  const submitted = new Map<string, { before: TurnKey; warning?: string }>();
+  const submitted = new Map<
+    string,
+    { before: TurnKey; warning?: string; idleAction?: string | null }
+  >();
   const results: RoundResult = [];
 
   for (const seat of active) {
@@ -476,7 +479,11 @@ async function runRoundParallel(
         requireTail: PARTICIPANT_TAIL,
       });
       if (res?.ok) {
-        submitted.set(seat.seatId, { before: res.before, warning: res.warning });
+        submitted.set(seat.seatId, {
+          before: res.before,
+          warning: res.warning,
+          idleAction: res.idleAction,
+        });
         await updateSeat(seat.seatId, { status: 'waiting' });
       }
     } catch {
@@ -509,6 +516,7 @@ async function runRoundParallel(
           requireTail: PARTICIPANT_TAIL,
           before: pending.before,
           warning: pending.warning,
+          idleAction: pending.idleAction,
         })) as DriveResult;
       } catch (err) {
         return { ok: false, failure: 'tab-closed' as never, detail: String(err), timings: {} };

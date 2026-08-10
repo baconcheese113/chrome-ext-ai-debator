@@ -24,9 +24,18 @@ export interface ProviderAdapter {
   };
 
   /**
-   * Stop-button presence only. The spike proved send-button state is worthless here: an
-   * empty composer disables the send button permanently, which is indistinguishable from
-   * "busy" and made the signal never resolve in any of 40 runs.
+   * How to tell the model is still writing.
+   *
+   * `stopSelectors` name the stop control where it is nameable. But the primary signal is not
+   * these selectors at all — it is that the composer's action control *swaps identity*
+   * between send and stop for exactly the duration of a reply, which the driver watches
+   * generically. Kimi's control is an unlabelled icon that no selector will ever name, and
+   * watching it change is the only thing that works there.
+   *
+   * What the spike actually proved worthless was the send button's *disabled* state: an empty
+   * composer disables it permanently, so "disabled" cannot distinguish busy from idle. That
+   * is a narrower finding than "the button is useless", and reading it too broadly cost us
+   * the best signal on the page.
    */
   generating: {
     stopSelectors?: string[];

@@ -7,8 +7,12 @@ export default defineConfig({
   testDir: './tests',
   // L1/L2 belong to vitest; L5 talks to real providers and must never run by default.
   testMatch: ['driver/**/*.spec.ts', 'e2e/**/*.spec.ts'],
-  fullyParallel: false,
-  workers: 1,
+  // Driver tests each drive their own page and share nothing, so they spread across workers.
+  // The panel suite declares `mode: 'serial'`, which keeps it in a single worker regardless —
+  // it launches a real browser with the extension loaded and moves tab focus around, and two
+  // of those interleaving would be a source of phantom failures.
+  fullyParallel: true,
+  workers: 4,
   timeout: 120_000,
   expect: { timeout: 15_000 },
   reporter: process.env.CI ? 'github' : 'list',

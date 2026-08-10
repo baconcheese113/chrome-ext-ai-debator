@@ -217,7 +217,20 @@ const kimi: ProviderAdapter = {
       'div.stop-icon',
     ],
   },
-  response: { selectors: ['div.markdown-container', 'div[class*="segment-assistant"]'] },
+  // CONFIRMED 2026-08-10 from a captured page: `div.segment.segment-assistant` is one element
+  // per assistant turn, matching 1:1 against `segment-user`.
+  //
+  // `markdown-container` used to lead, and that is the whole Kimi defect. It is applied per
+  // BLOCK inside a reply — the same trap as Claude's `.font-claude-response-body` — so a reply
+  // made of several blocks read as several turns and extraction returned a fragment. Nine
+  // rounds of a real panel were recorded from a fragment before anything noticed.
+  response: {
+    selectors: [
+      'div.segment.segment-assistant',
+      'div[class*="segment-assistant"]',
+      'div.markdown-container',
+    ],
+  },
 };
 
 const deepseek: ProviderAdapter = {

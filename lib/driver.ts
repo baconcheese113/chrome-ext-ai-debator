@@ -13,18 +13,6 @@ import type {
 export type { TurnKey };
 
 /**
- * Quiescence threshold. ChatGPT logged 85–97 mutation bursts inside a single long response,
- * so this has the least headroom there — shortening it breaks ChatGPT first.
- */
-const QUIESCENCE_MS = 1800;
-/**
- * How long the DOM must stay quiet when we have NO stop button to corroborate with. Only
- * used as the pessimistic path — a provider with a working stop button finishes far sooner.
- */
-const QUIESCENCE_CONFIRM = 3;
-/** Once a stop button has appeared and then gone, this much quiet is enough. */
-const STOP_GONE_CONFIRM_MS = 900;
-/**
  * How long a visible stop button is believed while the conversation DOM is completely static.
  *
  * Claude has been observed showing "Stop response" on an idle thread, which would otherwise
@@ -53,26 +41,51 @@ const SETTLE_RETRYABLE: readonly DriveFailure[] = [
 ];
 
 /**
- * Waiting periods, isolated so tests can shrink them. Two driver tests deliberately provoke
- * the no-reply timeout; at the production value they alone cost 90 seconds.
+ * The E2E build drives a local mock that replies in milliseconds, so the production waits are
+ * pure dead time there — they were most of a five-minute suite. Compressed as a set, keeping
+ * every ratio the logic depends on, so the behaviour under test is the same behaviour.
+ */
+const E2E = import.meta.env.WXT_E2E === 'true';
+
+/**
+ * Every waiting period, in one place, so tests can shrink them instead of enduring them.
+ *
+ * These are not arbitrary. Each one is a scar: see the comments on the defaults below, and on
+ * `staleStopMs` above.
  */
 export const driverTimings = {
-  newMessageTimeoutMs: 45_000,
-  detectTimeoutMs: 300_000,
-  staleStopMs: STALE_STOP_DEFAULT_MS,
+  newMessageTimeoutMs: E2E ? 3_000 : 45_000,
+  detectTimeoutMs: E2E ? 30_000 : 300_000,
+  staleStopMs: E2E ? 5_000 : STALE_STOP_DEFAULT_MS,
+  /**
+   * Quiescence threshold. ChatGPT logged 85–97 mutation bursts inside a single long response,
+   * so this has the least headroom there — shortening it breaks ChatGPT first.
+   */
+  quiescenceMs: E2E ? 250 : 1_800,
+  /**
+   * Multiplier applied when we have NO generating signal to corroborate with, so silence is
+   * all we have. The pessimistic path; anything with a working stop control finishes sooner.
+   */
+  quiescenceConfirm: 3,
+  /** Once generation has demonstrably started and stopped, this much quiet is enough. */
+  stopGoneConfirmMs: E2E ? 150 : 900,
+  /** How often the waiting loops look at the page. */
+  pollMs: E2E ? 80 : 250,
   /**
    * Silence demanded on each successive re-look after a truncation-shaped result. Escalating
    * rather than fixed: the first re-look catches a short thinking pause cheaply, the second
    * survives a model that reasons for half a minute before typing. Bounded, because a reply
    * that is still too short after this really is too short.
    */
-  settleQuietMs: [12_000, 30_000] as number[],
+  settleQuietMs: (E2E ? [700, 1_400] : [12_000, 30_000]) as number[],
 };
 
 /** Outcome of phase 1. `before` is the pre-send message count, needed by phase 2. */
 export interface SubmitResult {
   ok: boolean;
   before?: TurnKey;
+  /** The composer controls as they looked ready-to-send, so a swap back means "finished". */
+  idleAction?: string | null;
   failure?: DriveFailure;
   detail?: string;
   warning?: string;
@@ -116,13 +129,17 @@ export async function submitTurn(
     await sleep(350);
     t('inject', p);
 
+    // Photographed with the prompt in the box and before the click, so this is the control's
+    // "ready to send" state — the state it returns to when the reply is finished.
+    const idleAction = actionSignature(adapter);
+
     p = performance.now();
     if (!(adapter.overrides?.submit?.(composer, adapter) ?? submit(composer, adapter))) {
       raise('submit-failed', 'no enabled send button and Enter had no effect');
     }
     t('submit', p);
 
-    return { ok: true, before, timings, warning };
+    return { ok: true, before, idleAction, timings, warning };
   } catch (err) {
     const de = err instanceof DriveError ? err : undefined;
     return {
@@ -142,6 +159,7 @@ export async function awaitTurn(
   before: TurnKey,
   priorTimings: Record<string, number> = {},
   warning?: string,
+  idleAction?: string | null,
 ): Promise<DriveResult> {
   const timings: Record<string, number> = { ...priorTimings };
   const t = (k: string, from: number) => (timings[k] = Math.round(performance.now() - from));
@@ -169,7 +187,7 @@ export async function awaitTurn(
       const extraQuiet = look === 0 ? 0 : (driverTimings.settleQuietMs[look - 1] ?? 0);
 
       p = performance.now();
-      await awaitQuiescence(adapter, extraQuiet);
+      await awaitQuiescence(adapter, extraQuiet, idleAction);
       t(look === 0 ? 'detect' : `settle${look}`, p);
 
       p = performance.now();
@@ -218,7 +236,14 @@ export async function drive(
       diagnostics: submitted.diagnostics,
     };
   }
-  return awaitTurn(adapter, req, submitted.before!, submitted.timings, submitted.warning);
+  return awaitTurn(
+    adapter,
+    req,
+    submitted.before!,
+    submitted.timings,
+    submitted.warning,
+    submitted.idleAction,
+  );
 }
 
 function raise(failure: DriveFailure, detail: string): never {
@@ -451,28 +476,53 @@ function submit(composer: HTMLElement, adapter: ProviderAdapter): boolean {
  * means unrelated chrome — sidebars, autosave, blinking cursors — keeps resetting the quiet
  * timer, which is what made Gemini take far longer to register than it actually needed.
  */
-async function awaitQuiescence(adapter: ProviderAdapter, minQuietMs = 0): Promise<void> {
+async function awaitQuiescence(
+  adapter: ProviderAdapter,
+  minQuietMs = 0,
+  idleAction?: string | null,
+): Promise<void> {
   const deadline = performance.now() + driverTimings.detectTimeoutMs;
   let lastMutation = performance.now();
 
   const observer = new MutationObserver(() => {
     lastMutation = performance.now();
   });
-  observer.observe(conversationRoot(adapter), {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  });
+  const OBSERVE = { childList: true, subtree: true, characterData: true };
+  let root = conversationRoot(adapter);
+  observer.observe(root, OBSERVE);
 
   try {
     let sawStop = false;
     let stopGoneSince: number | null = null;
+    /**
+     * The control's appearance once it left its ready-to-send state. Latched once.
+     *
+     * Completion is "it changed back", not "it matches the ready state byte for byte" — a
+     * control that comes to rest even slightly differently (a class that was absent before
+     * the first send, say) would otherwise read as busy forever and cost the whole timeout.
+     */
+    let busyAction: string | null = null;
 
     while (performance.now() < deadline) {
-      await sleep(250);
+      await sleep(driverTimings.pollMs);
+
+      // A framework that re-renders the thread can swap out the node we are watching, leaving
+      // the observer attached to a detached subtree. Every subsequent mutation is invisible,
+      // the page looks instantly quiet, and a reply still being written reads as finished.
+      if (!root.isConnected) {
+        root = conversationRoot(adapter);
+        observer.observe(root, OBSERVE);
+        lastMutation = performance.now();
+      }
+
       const quietFor = performance.now() - lastMutation;
 
-      const stopVisible = stopSignal(adapter);
+      // The provider's own answer, and the primary signal: the composer's action control
+      // left its ready-to-send state when generation began, and has not changed back.
+      const sig = idleAction != null ? actionSignature(adapter) : null;
+      if (sig != null && busyAction === null && sig !== idleAction) busyAction = sig;
+      const actionBusy = busyAction !== null && sig === busyAction;
+      const stopVisible = stopSignal(adapter) ?? (actionBusy ? 'composer action control' : null);
       // A visible stop button normally means it is still working, whatever the DOM does —
       // but only while the conversation is actually changing. A stop button sitting over a
       // completely static thread is stale UI, and believing it costs the full timeout.
@@ -491,9 +541,9 @@ async function awaitQuiescence(adapter: ProviderAdapter, minQuietMs = 0): Promis
       if (quietFor < minQuietMs) continue;
 
       // Fast path: generation demonstrably started and has demonstrably stopped.
-      if (sawStop && performance.now() - stopGoneSince >= STOP_GONE_CONFIRM_MS) {
-        if (quietFor >= QUIESCENCE_MS) return;
-      } else if (quietFor >= QUIESCENCE_MS * QUIESCENCE_CONFIRM) {
+      if (sawStop && performance.now() - stopGoneSince >= driverTimings.stopGoneConfirmMs) {
+        if (quietFor >= driverTimings.quiescenceMs) return;
+      } else if (quietFor >= driverTimings.quiescenceMs * driverTimings.quiescenceConfirm) {
         // Slow path: no usable stop button, so silence is all we have. Demand more of it.
         return;
       }
@@ -527,6 +577,61 @@ function stopSignal(adapter: ProviderAdapter): string | null {
   return anyVisible(adapter.generating.stopSelectors) ?? anyVisible(GENERIC_STOP_SELECTORS);
 }
 
+/** Things a composer's action control might be built from, in any of these UIs. */
+const ACTION_CONTROLISH =
+  'button, [role="button"], svg, [class*="btn" i], [class*="send" i], [class*="stop" i], [class*="submit" i]';
+
+/**
+ * A fingerprint of the controls sitting with the composer.
+ *
+ * Every one of these products answers "am I still writing?" in the same place: the composer's
+ * action control turns from send into stop for exactly the duration of a reply, and back
+ * again when it finishes. That is the provider's own signal, published for its own UI, and it
+ * beats inferring completion from DOM silence — silence is also what a model reasoning
+ * server-side looks like.
+ *
+ * Fingerprinted rather than matched by selector, because the control is not always nameable.
+ * Kimi's is an unlabelled icon: no aria-label, no test id, nothing containing "stop". It is
+ * invisible to every selector we could write, and perfectly visible as a change.
+ *
+ * Structural attributes only — no text. A token counter or model picker sitting in the same
+ * row would otherwise read as the button changing.
+ */
+function actionSignature(adapter: ProviderAdapter): string | null {
+  const composer = findComposer(adapter);
+  if (!composer) return null;
+
+  let region: Element = composer;
+  for (let depth = 0; depth < 5; depth++) {
+    const parent: Element | null = region.parentElement;
+    if (!parent || parent === document.body || parent === document.documentElement) break;
+    region = parent;
+    if ((region.textContent?.length ?? 0) > 3000) break;
+  }
+
+  const parts: string[] = [];
+  for (const el of Array.from(region.querySelectorAll(ACTION_CONTROLISH))) {
+    if (el === composer || composer.contains(el)) continue;
+    if (!isVisible(el)) continue;
+    parts.push(
+      [
+        el.tagName,
+        el.getAttribute('data-testid') ?? '',
+        el.getAttribute('aria-label') ?? '',
+        el.getAttribute('class') ?? '',
+        // Deliberately NOT the disabled state. Sending empties the composer, which leaves the
+        // send button disabled until you type again — so a signature including it never
+        // returns to its pre-send value and the reply reads as never-ending. This is the
+        // spike's original finding, and it would have come straight back in through here.
+        // The icon itself. A send arrow and a stop square are different paths, and on an
+        // unlabelled control this is the only thing that differs.
+        (el.tagName === 'svg' ? el.querySelector('path')?.getAttribute('d') : '')?.slice(0, 48) ?? '',
+      ].join('|'),
+    );
+  }
+  return parts.length ? parts.join('\n') : null;
+}
+
 /**
  * Arm a capture and take it once the page starts answering.
  *
@@ -550,7 +655,7 @@ export async function diagnoseWhenBusy(
   const deadline = performance.now() + timeoutMs;
 
   while (performance.now() < deadline) {
-    await sleep(250);
+    await sleep(driverTimings.pollMs);
     const started =
       lastTurnKey(adapter).key !== baselineKey ||
       stopSignal(adapter) !== null ||
@@ -639,7 +744,7 @@ async function waitFor<T>(fn: () => T | undefined, timeout: number): Promise<T |
   while (performance.now() < deadline) {
     const v = fn();
     if (v !== undefined) return v;
-    await sleep(200);
+    await sleep(driverTimings.pollMs);
   }
   return undefined;
 }

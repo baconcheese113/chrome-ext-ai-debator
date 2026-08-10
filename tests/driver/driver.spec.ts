@@ -10,15 +10,30 @@ import type { DriveResult, ProviderAdapter } from '../../lib/types';
 
 const PROMPT = 'Explain optimistic concurrency control in detail, with examples.';
 
+/**
+ * Production waits, scaled down by roughly six.
+ *
+ * The mock answers in milliseconds, so at production values this suite spent almost all of
+ * its five minutes asleep — and a suite nobody wants to run is a suite that stops being run.
+ * Every ratio the completion logic depends on is preserved, so what is under test is
+ * unchanged; only the clock is faster. Tests whose subject IS a duration set their own.
+ */
+const FAST = {
+  quiescenceMs: 300,
+  stopGoneConfirmMs: 150,
+  pollMs: 60,
+  settleQuietMs: [800, 2_000],
+};
+
 async function open(
   page: Page,
   query: string,
-  timeouts?: { newMessageTimeoutMs?: number; staleStopMs?: number; settleQuietMs?: number[] },
+  timeouts?: Partial<Record<string, number | number[]>>,
 ) {
   await page.goto(`/index.html?${query}`);
   await page.addScriptTag({ url: '/dist/driver-harness.js' });
   await page.waitForFunction(() => Boolean(window.__driver));
-  if (timeouts) await page.evaluate((t) => window.__driver.setTimeouts(t), timeouts);
+  await page.evaluate((t) => window.__driver.setTimeouts(t), { ...FAST, ...timeouts });
 }
 
 function run(
@@ -56,7 +71,7 @@ test('completion survives ambient DOM churn outside the conversation', async ({ 
   const res = await run(page);
 
   expect(res.ok).toBe(true);
-  expect(Date.now() - started).toBeLessThan(20_000);
+  expect(Date.now() - started).toBeLessThan(10_000);
 });
 
 test('extracts correctly when layout is unavailable, as in a background tab', async ({ page }) => {
@@ -165,8 +180,8 @@ test('waits out a reasoning model that goes silent before answering', async ({ p
   // header — an 86-character answer to a question the model had not begun answering.
   //
   // Shrunk from the production [12s, 30s] so the test costs seconds, not a minute.
-  await open(page, 'mode=thinking&words=120&speed=3&thinkms=6000', {
-    settleQuietMs: [3000, 9000],
+  await open(page, 'mode=thinking&words=120&speed=3&thinkms=2500', {
+    settleQuietMs: [1200, 4000],
   });
   const res = await run(page);
 
@@ -179,12 +194,28 @@ test('without the settle re-look, the same page yields the thinking header', asy
   // The counterpart to the test above, and the reason to trust it: with re-looks disabled
   // this page reproduces the original defect exactly. Without this, the test above could be
   // passing because the mock is too gentle rather than because the fix works.
-  await open(page, 'mode=thinking&words=120&speed=3&thinkms=6000', { settleQuietMs: [] });
+  await open(page, 'mode=thinking&words=120&speed=3&thinkms=2500', { settleQuietMs: [] });
   const res = await run(page);
 
   expect(res.ok).toBe(false);
   expect(res.failure).toBe('implausible-response');
   expect(res.extraction!.text).toContain('Thinking');
+});
+
+test('uses the composer control swapping to stop, when nothing names it', async ({ page }) => {
+  // The signal every one of these products already publishes: the composer's action control
+  // turns from send into stop for exactly the duration of a reply. Kimi's is an unlabelled
+  // icon — no aria-label, no test id, nothing containing "stop" — so no selector can name it,
+  // and the driver had nothing left but DOM silence.
+  //
+  // This page goes silent for 7 seconds at a time mid-reply, which is well past the point
+  // quiescence alone calls a reply finished. Only the button state carries it through.
+  await open(page, 'mode=icon-only&words=120&gapms=1500', { settleQuietMs: [] });
+  const res = await run(page, mockProvider, 120, 'CONVERGED');
+
+  expect(res.ok).toBe(true);
+  expect(res.extraction!.text).toContain('CONVERGED');
+  expect(res.extraction!.text.length).toBeGreaterThan(200);
 });
 
 test('catches a long reply that stops before its closing line', async ({ page }) => {
@@ -237,7 +268,7 @@ test('completes without a stop button via the slow quiescence path', async ({ pa
 });
 
 test('does not call a long mid-stream pause the end of the reply', async ({ page }) => {
-  await open(page, 'mode=slow&words=60&speed=5');
+  await open(page, 'mode=slow&words=60&speed=5&gapms=1500');
   const res = await run(page);
 
   expect(res.ok).toBe(true);
@@ -248,20 +279,20 @@ test('does not call a long mid-stream pause the end of the reply', async ({ page
 test('does not hang when a stop button is left visible after the reply', async ({ page }) => {
   // A real Claude thread was observed idle with "Stop response" still in the DOM. Believing
   // it unconditionally costs the whole 300s detect timeout for that seat.
-  // Shrunk from the production 120s. That threshold is deliberately long — at 15s it cut
+  // Shrunk hard from the production 120s. That threshold is deliberately long — at 15s it cut
   // Grok off mid-think — so the test shrinks it rather than waiting two minutes.
-  await open(page, 'mode=stuck-stop&words=80&speed=5', { staleStopMs: 8000 });
+  await open(page, 'mode=stuck-stop&words=80&speed=5', { staleStopMs: 2500 });
   const started = Date.now();
   const res = await run(page);
 
   expect(res.ok).toBe(true);
   expect(res.extraction!.text.length).toBeGreaterThan(150);
   // Resolves via the stale-stop escape, nowhere near the 300s detect timeout.
-  expect(Date.now() - started).toBeLessThan(45_000);
+  expect(Date.now() - started).toBeLessThan(10_000);
 });
 
 test('reports no-new-message when nothing ever replies', async ({ page }) => {
-  await open(page, 'mode=silent', { newMessageTimeoutMs: 2000 });
+  await open(page, 'mode=silent', { newMessageTimeoutMs: 1200 });
   const res = await run(page);
 
   expect(res.ok).toBe(false);
@@ -269,7 +300,7 @@ test('reports no-new-message when nothing ever replies', async ({ page }) => {
 });
 
 test('says the adapter is wrong when no selector matches the page', async ({ page }) => {
-  await open(page, 'mode=normal&words=60&speed=5', { newMessageTimeoutMs: 2000 });
+  await open(page, 'mode=normal&words=60&speed=5', { newMessageTimeoutMs: 1200 });
   const broken: ProviderAdapter = {
     ...mockProvider,
     response: { selectors: ['.this-matches-nothing'] },
