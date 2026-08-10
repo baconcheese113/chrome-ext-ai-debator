@@ -1,6 +1,7 @@
 <script lang="ts">
   import { channelColor, seatStatusLabel } from '../../lib/channels';
   import type { RunState } from '../../lib/types';
+  import Capture from './Capture.svelte';
   import ConvergenceRail from './ConvergenceRail.svelte';
   import FinalSummary from './FinalSummary.svelte';
   import NarratorCard from './NarratorCard.svelte';
@@ -49,6 +50,23 @@
         {/each}
       </ul>
     </div>
+
+    <!-- Diagnostics belong here, not only on the setup screen. A model that truncates does it
+         mid-run, and the setup screen is the one place you cannot reach while a run is on. -->
+    <details class="tools">
+      <summary>Capture a tab</summary>
+      <p class="tools-hint">
+        Nothing is sent to any model. Use <strong>Catch it answering</strong> while a model is
+        writing to photograph controls that only exist mid-reply.
+      </p>
+      {#each run.seats as seat (seat.seatId)}
+        <div class="tool-row">
+          <span class="tool-name">{seat.displayName}</span>
+          <Capture tabId={seat.tabId} providerId={seat.providerId} label={seat.displayName} />
+        </div>
+      {/each}
+    </details>
+
     <ConvergenceRail {run} />
   </aside>
 
@@ -145,6 +163,16 @@
   .state.bad { color: var(--contest); }
   .role { grid-column: 2 / -1; font-size: 10px; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+  .tools { padding: 12px 16px; border-bottom: 1px solid var(--rule); }
+  .tools summary {
+    cursor: pointer; color: var(--ink-dim);
+    font: 600 11px var(--font-label); letter-spacing: .12em; text-transform: uppercase;
+  }
+  .tools-hint { margin: 8px 0 10px; color: var(--ink-faint); font-size: 11px; line-height: 1.5; }
+  .tools-hint strong { color: var(--ink-dim); font-weight: 600; }
+  .tool-row { display: grid; gap: 5px; padding: 7px 0; border-top: 1px solid var(--rule); }
+  .tool-name { font: 600 11px var(--font-label); letter-spacing: .08em; }
 
   main { display: grid; gap: 22px; }
   .round header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }

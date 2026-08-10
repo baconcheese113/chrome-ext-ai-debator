@@ -149,6 +149,12 @@
       <div>
         <strong>{incidentHeadline}</strong>
         <span class="data why">{run.incident.failure} — {run.incident.detail}</span>
+        {#if run.incident.extracted}
+          <!-- The diagnosis, on sight. A clean opening sentence means we read too early. A
+               heading or "Thinking…" means the selector is on the wrong element, and no
+               amount of waiting or re-reading will fix that. -->
+          <span class="read">We read: “{run.incident.extracted}”</span>
+        {/if}
         {#if run.incident.canRecheck}
           <!-- Ordering is the advice: re-reading is free and usually right, sending again
                costs a message and buries the answer that is already on screen. -->
@@ -236,6 +242,11 @@
   }
   .incident strong { display: block; font-weight: 600; }
   .why { display: block; color: var(--ink-dim); margin-top: 3px; font-size: 12px; }
+  .read {
+    display: block; margin-top: 6px; padding: 6px 9px; max-width: 78ch;
+    font: 12px/1.5 var(--font-data); color: var(--ink-dim);
+    background: var(--chassis); border-left: 2px solid var(--rule); border-radius: var(--r);
+  }
   .advice { display: block; color: var(--ink-dim); margin-top: 7px; font-size: 12px; max-width: 62ch; }
   .advice b { color: var(--ink); font-weight: 600; }
   .acts { display: flex; gap: 8px; flex-wrap: wrap; }

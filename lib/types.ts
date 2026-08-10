@@ -218,6 +218,14 @@ export interface Incident {
    */
   canRecheck: boolean;
   /**
+   * The text that was actually read, when something was read and then rejected.
+   *
+   * Shown in the banner because it settles the diagnosis on sight: a clean opening sentence
+   * means we looked while the model was still writing, whereas "Thinking…" or a heading means
+   * the selector is pointed at the wrong element and no amount of waiting will help.
+   */
+  extracted?: string;
+  /**
    * Candidate selectors captured from the failing page. Carried all the way to the UI so a
    * failure is directly actionable — a broken adapter is fixed from this, not from guessing.
    */

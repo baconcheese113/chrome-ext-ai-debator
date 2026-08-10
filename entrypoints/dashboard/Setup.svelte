@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { AdapterCheck } from '../../lib/selector-check';
   import type { CandidateTab, ConvergenceStrategy, RunConfig, Seat } from '../../lib/types';
+  import Capture from './Capture.svelte';
 
   let { onstart }: { onstart: (c: RunConfig, s: Array<Omit<Seat, 'status'>>) => void } = $props();
 
@@ -41,69 +42,6 @@
     }
   }
 
-  async function diagnose(tabId: number) {
-    const d = await chrome.runtime.sendMessage({ type: 'DIAGNOSE_TAB', tabId });
-    // Copying beats rendering here: the output's only job is to be pasted somewhere useful.
-    await navigator.clipboard.writeText(JSON.stringify(d, null, 2));
-    diagnosed = tabId;
-    setTimeout(() => (diagnosed = null), 2500);
-  }
-  let diagnosed = $state<number | null>(null);
-
-  /**
-   * A capture the page takes of itself the moment it starts answering.
-   *
-   * Some controls exist only while a model is generating — the stop button most of all — and
-   * catching one by hand means sending a prompt in one tab and reaching a button in another
-   * before the model finishes. The result is held rather than copied: the clipboard is not
-   * writable while this tab is in the background, which is precisely where it will be.
-   */
-  let armed = $state<number | null>(null);
-  let held = $state<{ label: string; json: string; note: string; summary: string } | null>(null);
-  let heldCopied = $state(false);
-
-  async function armCapture(tab: CandidateTab) {
-    armed = tab.tabId;
-    held = null;
-    try {
-      const d = await chrome.runtime.sendMessage({
-        type: 'DIAGNOSE_WHEN_BUSY',
-        tabId: tab.tabId,
-        providerId: tab.providerId,
-      });
-      held = {
-        label: names[tab.tabId]?.trim() || tab.providerLabel,
-        json: JSON.stringify(d, null, 2),
-        note: d?.error ?? d?.note ?? 'captured',
-        summary: describe(d),
-      };
-    } finally {
-      armed = null;
-    }
-  }
-
-  /**
-   * Say whether the capture actually contains what it was armed for. "Captured" alone is not
-   * reassuring when the whole reason for arming was that three earlier captures came back
-   * without a stop control.
-   */
-  function describe(d: { candidateButtons?: unknown[]; composerHtml?: string }): string {
-    const buttons = (d?.candidateButtons ?? []) as Array<{ ariaLabel?: string; testId?: string }>;
-    const sawStop =
-      buttons.some((b) => /stop/i.test(`${b.ariaLabel ?? ''} ${b.testId ?? ''}`)) ||
-      /stop/i.test(d?.composerHtml ?? '');
-    const parts = [`${buttons.length} controls`];
-    if (d?.composerHtml) parts.push('composer markup');
-    parts.push(sawStop ? 'including a stop control' : 'no stop control visible');
-    return parts.join(', ');
-  }
-
-  async function copyHeld() {
-    if (!held) return;
-    await navigator.clipboard.writeText(held.json);
-    heldCopied = true;
-    setTimeout(() => (heldCopied = false), 2500);
-  }
 
   type TabCheck = AdapterCheck & { tabId: number; title: string };
   let checks = $state<TabCheck[] | null>(null);
@@ -229,39 +167,14 @@
               <option value="participant">Participant</option>
               <option value="narrator">Narrator</option>
             </select>
-            <div class="diags">
-              <button class="diag" onclick={() => diagnose(t.tabId)}>
-                {diagnosed === t.tabId ? 'Copied' : 'Diagnose'}
-              </button>
-              <button
-                class="diag"
-                class:armed={armed === t.tabId}
-                disabled={armed !== null && armed !== t.tabId}
-                title="Arms a capture. Go to the tab and send it anything — the page photographs itself as soon as it starts answering."
-                onclick={() => armCapture(t)}
-              >
-                {armed === t.tabId ? 'Waiting…' : 'Catch it answering'}
-              </button>
-            </div>
+            <Capture
+              tabId={t.tabId}
+              providerId={t.providerId}
+              label={names[t.tabId]?.trim() || t.providerLabel}
+            />
           </li>
         {/each}
       </ul>
-
-      {#if armed !== null}
-        <p class="foot arm-live">
-          Armed. Switch to that tab and send it anything — a plain “hi” is enough. The page
-          captures itself a moment after it starts answering, and the result waits here.
-        </p>
-      {/if}
-
-      {#if held}
-        <!-- Held, not auto-copied: the clipboard is unavailable to a background tab, and this
-             capture is taken while you are deliberately looking at a different one. -->
-        <div class="held">
-          <span>Captured <strong>{held.label}</strong> — {held.note}. {held.summary}.</span>
-          <button class="tiny" onclick={copyHeld}>{heldCopied ? 'Copied' : 'Copy capture'}</button>
-        </div>
-      {/if}
 
       <p class="foot">
         <strong>Diagnose</strong> copies this page's candidate selectors right now.
@@ -353,21 +266,8 @@
   .prov { font: 600 12px var(--font-label); letter-spacing: .1em; text-transform: uppercase; }
   .title { color: var(--ink-faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .name { font-size: 13px; }
-  .diags { display: flex; gap: 6px; flex-wrap: wrap; }
-  .diag { padding: 7px 10px; font-size: 11px; }
-  .diag.armed {
-    color: var(--open); border-color: var(--open);
-    background: color-mix(in srgb, var(--open) 12%, transparent);
-  }
   .foot { color: var(--ink-faint); font-size: 12px; margin: 12px 0 0; }
   .foot strong { color: var(--ink-dim); font-weight: 600; }
-  .arm-live { color: var(--open); }
-  .held {
-    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
-    margin-top: 12px; padding: 9px 12px; font-size: 13px;
-    background: var(--chassis); border: 1px solid var(--rule);
-    border-left: 2px solid var(--agree); border-radius: var(--r);
-  }
   .empty { color: var(--ink-dim); margin: 0; }
   .loaderr { color: var(--contest); margin: 0; }
 

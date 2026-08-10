@@ -532,6 +532,7 @@ async function runRoundParallel(
         result?.detail ?? 'no detail',
         result?.diagnostics,
         pending.before,
+        result?.extraction?.text,
       );
 
       if (action === 'recheck') {
@@ -661,6 +662,7 @@ async function sendTo(
       result?.detail ?? 'no detail',
       result?.diagnostics,
       before,
+      result?.extraction?.text,
     );
     if (action === 'abort') return 'aborted';
     if (action === 'drop') return 'dropped';
@@ -804,6 +806,7 @@ async function raiseIncident(
   detail: string,
   diagnostics?: Diagnostics,
   before?: TurnKey,
+  extracted?: string,
 ): Promise<IncidentAction> {
   await updateSeat(seat.seatId, { status: 'failed', lastError: `${failure}: ${detail}` });
   await appendLog('error', `${seat.displayName} failed (${failure}): ${detail}`);
@@ -826,6 +829,7 @@ async function raiseIncident(
     // happily return the previous round's reply and the panel would trade stale content while
     // looking repaired.
     canRecheck: before !== undefined,
+    extracted: extracted?.slice(0, 400),
     diagnostics,
   };
   await patchRun({ status: 'paused', incident });
