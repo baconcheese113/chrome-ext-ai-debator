@@ -509,9 +509,17 @@ describe('steering', () => {
     const orch = await loadOrchestrator();
     const running = orch.startRun({ ...CONFIG, maxRounds: 2 }, [seat(1, 'A'), seat(2, 'B')]);
 
-    // Queue mid-run; it must land at the next round boundary, not the current one.
-    await waitFor(() => (getRunState()?.round ?? 0) >= 1);
+    // Held at the round-1 boundary before queueing, which is both the real flow the Steer
+    // panel implements and the only way to make this deterministic.
+    //
+    // Waiting for `round >= 1` and then writing was a race, and it failed intermittently in
+    // CI: on a fast machine round 2 had already started — and already consumed the empty
+    // queue — before the write landed, so the note was never delivered and the run finished
+    // with no steers at all.
+    orch.pauseAfterRound();
+    expect(await waitFor(() => getRunState()?.awaitingSteer === true)).toBe(true);
     await patchPending('Bring in non-Western sources.');
+    orch.resumeRun();
     await running;
 
     const run = getRunState();
