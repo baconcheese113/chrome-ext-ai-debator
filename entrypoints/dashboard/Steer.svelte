@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { api } from '../../lib/browser';
   import type { RunState } from '../../lib/types';
 
   let { run }: { run: RunState } = $props();
 
   let draft = $state('');
   const send = (type: string, extra: object = {}) =>
-    void chrome.runtime.sendMessage({ type, ...extra });
+    void api.runtime.sendMessage({ type, ...extra });
 
   function queue() {
     if (!draft.trim()) return;

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Debator — multi-model brainstorming panels in your browser</title>
+<meta name="description" content="Run a brainstorming panel across Claude, ChatGPT, Gemini, Grok and more, using the subscriptions you already pay for. No API keys." />
+<link rel="icon" href="icon-128.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<main class="shell">
+
+  <h1><span class="mark" aria-hidden="true"></span>AI Debator</h1>
+  <p class="lede">
+    A brainstorming panel across the AI chat tabs you already have open. Every round, each
+    model sees what every other model just said and answers all of them at once. No API keys —
+    it uses the subscriptions you already pay for.
+  </p>
+
+  <ul class="stores">
+    <li><a href="#" aria-disabled="true">Chrome Web Store — in review</a></li>
+    <li><a href="#" aria-disabled="true">Firefox Add-ons — in review</a></li>
+    <li><a href="#" aria-disabled="true">Edge Add-ons — in review</a></li>
+    <li><a href="https://github.com/baconcheese113/chrome-ext-ai-debator/releases">Download a build</a></li>
+  </ul>
+
+  <h2>How it works</h2>
+  <p>
+    You open each model in its own tab and pick the model you want — Opus or Sonnet, o3 or 4o.
+    The extension claims those tabs as seats and reuses the same thread for every round, so it
+    doesn't litter your history with one conversation per turn.
+  </p>
+  <p>
+    One seat can be a <strong>narrator</strong>: an observer that never argues, and instead
+    writes a plain-language summary of each round plus what the panel agreed on, what it
+    contested, and what is still open. It also decides when the panel has stopped making
+    progress.
+  </p>
+
+  <h2>It does not re-render the replies</h2>
+  <p>
+    Anthropic, OpenAI and Google render their own output better than this ever would, and the
+    formatting is part of the answer. The dashboard is a conductor's console: it shows you
+    where the panel agrees, where it doesn't, and what's stuck — with one click through to
+    each model's own tab for the full reply in its own typography.
+  </p>
+
+  <h2>You can steer it</h2>
+  <p>
+    Ten rounds of cross-examination narrows. Each round stress-tests what is already on the
+    table rather than widening the field. So you can drop a note in between rounds — a
+    correction, a discipline the panel is ignoring, a source it would never reach on its own —
+    and every model sees it at the start of the next round, marked as coming from you.
+  </p>
+
+  <h2>Supported</h2>
+  <p>
+    Claude, ChatGPT, Gemini, Grok, Kimi, Qwen and DeepSeek. Adding another is a block of
+    configuration rather than a code change, and the extension ships a
+    <strong>Check adapters</strong> audit that tells you which selectors still match a
+    provider's current page without sending anything.
+  </p>
+
+  <h2>Privacy</h2>
+  <p>
+    No server, no accounts, no analytics, and no networking code at all. Everything stays in
+    your browser's extension storage until you delete it.
+    <a href="privacy.html">Read the privacy policy.</a>
+  </p>
+
+  <div class="note">
+    Open source under the MIT licence.
+    <a href="https://github.com/baconcheese113/chrome-ext-ai-debator">Source on GitHub</a> —
+    including the test suite that drives a fake provider through every way a real one has
+    broken on us.
+  </div>
+
+  <footer>
+    <a href="privacy.html">Privacy</a> ·
+    <a href="https://github.com/baconcheese113/chrome-ext-ai-debator">GitHub</a> ·
+    <a href="https://github.com/baconcheese113/chrome-ext-ai-debator/issues">Report a problem</a>
+  </footer>
+
+</main>
+</body>
+</html>

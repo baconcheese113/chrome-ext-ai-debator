@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from '../../lib/browser';
   import { onMount } from 'svelte';
   import { EMPTY_RUN, getRun } from '../../lib/store';
   import type { RunConfig, RunState, Seat } from '../../lib/types';
@@ -17,22 +18,24 @@
       run = r;
       loaded = true;
     });
+    // `chrome` here is the ambient TYPE namespace from @types/chrome, not the global object —
+    // types are identical across browsers, only the runtime differs. See lib/browser.ts.
     const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === 'local' && changes.runState?.newValue) {
         run = changes.runState.newValue as RunState;
       }
     };
-    chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    api.storage.onChanged.addListener(listener);
+    return () => api.storage.onChanged.removeListener(listener);
   });
 
   const showSetup = $derived(run.status === 'idle' || run.status === 'aborted' || !run.seats.length);
 
   function start(config: RunConfig, seats: Array<Omit<Seat, 'status'>>) {
-    void chrome.runtime.sendMessage({ type: 'START_RUN', config, seats });
+    void api.runtime.sendMessage({ type: 'START_RUN', config, seats });
   }
   const send = (type: string, extra: object = {}) =>
-    void chrome.runtime.sendMessage({ type, ...extra });
+    void api.runtime.sendMessage({ type, ...extra });
 
   let exported = $state(false);
   /**

@@ -14,14 +14,28 @@ better than this ever would, and their formatting is the point. The dashboard is
 **conductor's console**: it shows you where the panel agrees, where it doesn't, and what's
 stuck, with one click through to each model's own tab for the full reply.
 
-## Setup
+## Install
+
+Store listings are pending review. Until they are live, grab a build from
+[Releases](https://github.com/baconcheese113/chrome-ext-ai-debator/releases) or build it
+yourself.
+
+| Browser | Package |
+| --- | --- |
+| Chrome, Edge, Brave, Opera | `ai-debator-<version>-chrome.zip` |
+| Firefox | `ai-debator-<version>-firefox.zip` |
+
+## Build it yourself
 
 ```bash
 npm install
-npm run build
+npm run build              # Chrome / Edge  → .output/chrome-mv3
+npx wxt build -b firefox   # Firefox        → .output/firefox-mv2
 ```
 
 `chrome://extensions` → Developer mode → **Load unpacked** → `.output/chrome-mv3`.
+On Firefox: `about:debugging` → This Firefox → **Load Temporary Add-on** →
+`.output/firefox-mv2/manifest.json`.
 
 Then:
 

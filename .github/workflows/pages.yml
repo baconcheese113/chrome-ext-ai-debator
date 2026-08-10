@@ -1,0 +1,45 @@
+name: Pages
+
+# The privacy policy is a hard requirement for the Chrome Web Store listing, and a store
+# listing pointing at a dead URL is a rejection. So it deploys from main automatically rather
+# than living somewhere that can silently rot.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy in progress: a half-published site is worse than a stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Copy the extension icon into the site
+        # One icon, one source of truth. A separate copy would drift from the one that ships.
+        run: cp public/icon/128.png site/icon-128.png
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

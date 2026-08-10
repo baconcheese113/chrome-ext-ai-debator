@@ -1,3 +1,4 @@
+import { api, injectScript } from './browser';
 import { evaluateConvergence, parseNarratorSummary } from './convergence';
 import {
   narratorRound,
@@ -190,7 +191,7 @@ export async function startRun(
     finishedAt: null,
   });
 
-  keepaliveTimer = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
+  keepaliveTimer = setInterval(() => void api.runtime.getPlatformInfo(), 20_000);
   try {
     await runLoop();
   } catch (err) {
@@ -471,7 +472,7 @@ async function runRoundParallel(
       await focusSeatTab(seat);
       await updateSeat(seat.seatId, { status: 'sending' });
       if (!(await ensureContentScript(seat.tabId))) continue;
-      const res = await chrome.tabs.sendMessage(seat.tabId, {
+      const res = await api.tabs.sendMessage(seat.tabId, {
         type: 'DRIVE_SUBMIT',
         providerId: seat.providerId,
         prompt: prompts.get(seat.seatId)!,
@@ -507,7 +508,7 @@ async function runRoundParallel(
     const harvest = async (type: 'DRIVE_AWAIT' | 'DRIVE_RECHECK'): Promise<DriveResult> => {
       try {
         await focusSeatTab(seat);
-        return (await chrome.tabs.sendMessage(seat.tabId, {
+        return (await api.tabs.sendMessage(seat.tabId, {
           type,
           providerId: seat.providerId,
           prompt: prompts.get(seat.seatId)!,
@@ -651,7 +652,7 @@ async function sendTo(
     let result: DriveResult;
     try {
       await updateSeat(seat.seatId, { status: 'waiting' });
-      result = (await chrome.tabs.sendMessage(
+      result = (await api.tabs.sendMessage(
         seat.tabId,
         recheckOnly
           ? { type: 'DRIVE_RECHECK', providerId: seat.providerId, prompt, minChars, requireTail, before }
@@ -765,8 +766,8 @@ async function recordAttempt(
  * This is why a round drives seats one at a time: only one tab per window can be active.
  */
 async function focusSeatTab(seat: Seat): Promise<void> {
-  const tab = await chrome.tabs.get(seat.tabId);
-  if (!tab.active) await chrome.tabs.update(seat.tabId, { active: true });
+  const tab = await api.tabs.get(seat.tabId);
+  if (!tab.active) await api.tabs.update(seat.tabId, { active: true });
 }
 
 /**
@@ -777,7 +778,7 @@ async function focusSeatTab(seat: Seat): Promise<void> {
 async function ensureContentScript(tabId: number): Promise<boolean> {
   const ping = async () => {
     try {
-      return (await chrome.tabs.sendMessage(tabId, { type: 'PING' }))?.ok === true;
+      return (await api.tabs.sendMessage(tabId, { type: 'PING' }))?.ok === true;
     } catch {
       return false;
     }
@@ -785,10 +786,7 @@ async function ensureContentScript(tabId: number): Promise<boolean> {
 
   if (await ping()) return true;
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content-scripts/driver.js'],
-    });
+    await injectScript(tabId, 'content-scripts/driver.js');
   } catch (err) {
     await appendLog('warn', `Could not inject into tab ${tabId}: ${String(err)}`);
     return false;
@@ -804,10 +802,10 @@ async function ensureContentScript(tabId: number): Promise<boolean> {
  */
 async function guardWindow(seat: Seat): Promise<string | undefined> {
   try {
-    const tab = await chrome.tabs.get(seat.tabId);
-    const win = await chrome.windows.get(tab.windowId);
+    const tab = await api.tabs.get(seat.tabId);
+    const win = await api.windows.get(tab.windowId);
     if (win.state === 'minimized') {
-      await chrome.windows.update(tab.windowId, { state: 'normal', focused: false });
+      await api.windows.update(tab.windowId, { state: 'normal', focused: false });
       await appendLog(
         'warn',
         `${seat.displayName}'s window was minimized — restored it. Minimized windows are throttled and produce truncated responses.`,

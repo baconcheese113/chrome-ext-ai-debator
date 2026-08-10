@@ -1,3 +1,4 @@
+import { api } from './browser';
 import type { LogEntry, RunState, TurnRecord } from './types';
 
 const KEY = 'runState';
@@ -31,12 +32,12 @@ export const EMPTY_RUN: RunState = {
 };
 
 export async function getRun(): Promise<RunState> {
-  const got = await chrome.storage.local.get(KEY);
+  const got = await api.storage.local.get(KEY);
   return (got[KEY] as RunState) ?? EMPTY_RUN;
 }
 
 export async function setRun(state: RunState): Promise<void> {
-  await chrome.storage.local.set({ [KEY]: state });
+  await api.storage.local.set({ [KEY]: state });
 }
 
 export async function patchRun(patch: Partial<RunState>): Promise<RunState> {

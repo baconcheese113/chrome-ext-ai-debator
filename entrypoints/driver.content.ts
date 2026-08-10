@@ -1,4 +1,5 @@
 import { ADAPTERS, ADAPTERS_BY_ID } from '../lib/adapters';
+import { api } from '../lib/browser';
 import { collectDiagnostics } from '../lib/diagnostics';
 import { awaitTurn, diagnoseWhenBusy, drive, submitTurn } from '../lib/driver';
 import { checkAdapter } from '../lib/selector-check';
@@ -9,7 +10,7 @@ export default defineContentScript({
   runAt: 'document_idle',
 
   main() {
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type === 'PING') {
         sendResponse({ ok: true });
         return false;

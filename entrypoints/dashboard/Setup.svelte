@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from '../../lib/browser';
   import { onMount } from 'svelte';
   import type { AdapterCheck } from '../../lib/selector-check';
   import type { CandidateTab, ConvergenceStrategy, RunConfig, Seat } from '../../lib/types';
@@ -27,7 +28,7 @@
     try {
       // sendMessage resolves to undefined when the service worker has no listener yet.
       // Without this guard the iteration below throws and the screen hangs on "Scanning".
-      const res = await chrome.runtime.sendMessage({ type: 'LIST_TABS' });
+      const res = await api.runtime.sendMessage({ type: 'LIST_TABS' });
       if (!Array.isArray(res)) throw new Error('the extension background did not respond');
       tabs = res;
       for (const t of tabs) {
@@ -54,7 +55,7 @@
   async function checkAdapters() {
     checking = true;
     try {
-      checks = await chrome.runtime.sendMessage({ type: 'CHECK_ADAPTERS' });
+      checks = await api.runtime.sendMessage({ type: 'CHECK_ADAPTERS' });
     } finally {
       checking = false;
     }

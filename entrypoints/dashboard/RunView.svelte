@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from '../../lib/browser';
   import { channelColor, seatStatusLabel } from '../../lib/channels';
   import type { RunState } from '../../lib/types';
   import Capture from './Capture.svelte';
@@ -25,7 +26,7 @@
     return run.summaries.find((s) => s.round === round);
   }
   function focusTab(tabId: number) {
-    void chrome.tabs.update(tabId, { active: true });
+    void api.tabs.update(tabId, { active: true });
   }
 </script>
 

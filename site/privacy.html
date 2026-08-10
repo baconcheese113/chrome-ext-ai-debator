@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy — AI Debator</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<main class="prose">
+
+<p class="back"><a href="./">← AI Debator</a></p>
+
+<h1>Privacy Policy</h1>
+<p class="meta">AI Debator browser extension · Last updated 10 August 2026</p>
+
+<p class="lede">
+  AI Debator has no server. It sends nothing anywhere. Everything it holds stays in your
+  browser's own extension storage, on your machine, until you delete it.
+</p>
+
+<h2>What the extension stores</h2>
+<p>
+  While a panel runs, the extension keeps a record of that run in local extension storage
+  (<code>storage.local</code>) so the dashboard can display it and survive a browser restart:
+</p>
+<ul>
+  <li>the topic you typed and the settings you chose;</li>
+  <li>the text of each model's reply, as read from the page;</li>
+  <li>the narrator's round summaries and closing summary;</li>
+  <li>any notes you sent to the panel between rounds;</li>
+  <li>an activity log and a bounded diagnostic record of the last 200 attempts, holding
+      excerpts of what was sent and what came back.</li>
+</ul>
+<p>
+  One run is kept at a time. Starting a new panel, or pressing <em>New panel</em>, replaces it.
+  Removing the extension deletes it with everything else the extension owns.
+</p>
+
+<h2>What it does not do</h2>
+<ul>
+  <li>No analytics, telemetry, crash reporting, or usage measurement of any kind.</li>
+  <li>No accounts, no sign-in, no identifiers, and nothing that could create one.</li>
+  <li>No advertising, no profiling, and no sale or sharing of anything.</li>
+  <li>No network requests to any server operated by this project — the extension contains no
+      networking code at all.</li>
+</ul>
+
+<h2>The AI services you use</h2>
+<p>
+  The extension types into chat tabs you have already opened and signed into yourself, and
+  reads the replies from the page. Those conversations happen between you and that provider,
+  under that provider's own privacy policy, exactly as if you had typed the messages by hand.
+  The extension holds no credentials and cannot see any.
+</p>
+
+<h2>When information leaves your machine</h2>
+<p>Only when you deliberately move it, in one of two ways:</p>
+<ul>
+  <li><strong>Export run</strong> writes the run record to a file in your downloads folder.
+      Where that file goes next is up to you.</li>
+  <li><strong>Diagnose</strong> and <strong>Catch it answering</strong> copy a technical
+      snapshot of a provider page to your clipboard, for reporting a broken selector. That
+      snapshot includes markup from the page, which can contain your conversation text. Read
+      it before you paste it anywhere.</li>
+</ul>
+<p>Neither happens on its own. Both require a click.</p>
+
+<h2>Permissions</h2>
+<dl>
+  <dt><code>tabs</code></dt>
+  <dd>To list the AI chat tabs you have open so you can assign them seats, and to bring the
+      tab being driven to the front — a background tab is not rendered and produces truncated
+      replies.</dd>
+
+  <dt><code>scripting</code></dt>
+  <dd>To load the extension's own content script into a chat tab that was already open before
+      the extension was installed or updated.</dd>
+
+  <dt><code>storage</code></dt>
+  <dd>To keep the current run on your machine so the dashboard survives a restart.</dd>
+
+  <dt>Site access to the supported AI chat sites</dt>
+  <dd>To place your prompt in the composer and read the reply back. The extension runs on
+      those sites only, and requests access to nothing else.</dd>
+</dl>
+
+<h2>Children</h2>
+<p>
+  The extension is not directed at children and collects nothing from anyone.
+</p>
+
+<h2>Changes</h2>
+<p>
+  If this policy changes, the revised version will be published at this address with a new
+  date, and the change will appear in the project's public commit history.
+</p>
+
+<h2>Contact</h2>
+<p>
+  Questions or reports:
+  <a href="https://github.com/baconcheese113/chrome-ext-ai-debator/issues">open an issue</a>
+  on the project repository.
+</p>
+
+</main>
+</body>
+</html>

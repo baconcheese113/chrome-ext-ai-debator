@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { api } from '../../lib/browser';
+
   /**
    * Diagnostic capture for one tab, usable from anywhere.
    *
@@ -18,7 +20,7 @@
   let diagnosed = $state(false);
 
   async function diagnose() {
-    const d = await chrome.runtime.sendMessage({ type: 'DIAGNOSE_TAB', tabId });
+    const d = await api.runtime.sendMessage({ type: 'DIAGNOSE_TAB', tabId });
     const json = JSON.stringify(d, null, 2);
     held = { json, note: d?.error ?? 'captured now', summary: describe(d) };
     // Written directly rather than via copy(), which would also light up the held row's own
@@ -32,7 +34,7 @@
     armed = true;
     held = null;
     try {
-      const d = await chrome.runtime.sendMessage({
+      const d = await api.runtime.sendMessage({
         type: 'DIAGNOSE_WHEN_BUSY',
         tabId,
         providerId,

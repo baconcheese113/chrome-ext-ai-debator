@@ -1,4 +1,5 @@
 import { ADAPTERS, ADAPTERS_BY_ID, adapterForUrl } from '../lib/adapters';
+import { action, api, injectScript } from '../lib/browser';
 import type { AdapterCheck } from '../lib/selector-check';
 import {
   markConverged,
@@ -13,13 +14,13 @@ import { EMPTY_RUN, getRun, patchRun, setRun } from '../lib/store';
 import type { BgMessage, CandidateTab } from '../lib/types';
 
 export default defineBackground(() => {
-  chrome.action.onClicked.addListener(() => void openDashboard());
+  action().onClicked.addListener(() => void openDashboard());
 
   // The worker just started, so no run loop can be alive. Anything the stored state claims
   // is "running" is a leftover from a terminated worker.
   void reconcileOrphanedRun('The extension restarted while a panel was running.');
 
-  chrome.runtime.onMessage.addListener((msg: BgMessage, _sender, sendResponse) => {
+  api.runtime.onMessage.addListener((msg: BgMessage, _sender, sendResponse) => {
     switch (msg.type) {
       case 'LIST_TABS':
         void listCandidateTabs().then(sendResponse);
@@ -96,16 +97,13 @@ export default defineBackground(() => {
  * a model to start answering, and MV3 will otherwise shut the worker down underneath it.
  */
 async function diagnoseTab(tabId: number, msg: object): Promise<unknown> {
-  const keepalive = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
+  const keepalive = setInterval(() => void api.runtime.getPlatformInfo(), 20_000);
   try {
     try {
-      return await chrome.tabs.sendMessage(tabId, msg);
+      return await api.tabs.sendMessage(tabId, msg);
     } catch {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content-scripts/driver.js'],
-      });
-      return await chrome.tabs.sendMessage(tabId, msg);
+      await injectScript(tabId, 'content-scripts/driver.js');
+      return await api.tabs.sendMessage(tabId, msg);
     }
   } catch (err) {
     return { error: `Could not reach this tab: ${String(err)}. Reload it and try again.` };
@@ -128,18 +126,15 @@ async function checkAllTabs(): Promise<Array<AdapterCheck & { tabId: number; tit
 
     let result: AdapterCheck | null = null;
     try {
-      result = (await chrome.tabs.sendMessage(tab.tabId, {
+      result = (await api.tabs.sendMessage(tab.tabId, {
         type: 'CHECK_ADAPTER',
         providerId: tab.providerId,
       })) as AdapterCheck | null;
     } catch {
       // Tabs opened before the extension loaded have no content script yet.
       try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.tabId },
-          files: ['content-scripts/driver.js'],
-        });
-        result = (await chrome.tabs.sendMessage(tab.tabId, {
+        await injectScript(tab.tabId, 'content-scripts/driver.js');
+        result = (await api.tabs.sendMessage(tab.tabId, {
           type: 'CHECK_ADAPTER',
           providerId: tab.providerId,
         })) as AdapterCheck | null;
@@ -172,14 +167,14 @@ async function checkAllTabs(): Promise<Array<AdapterCheck & { tabId: number; tit
 }
 
 async function openDashboard(): Promise<void> {
-  const url = chrome.runtime.getURL('/dashboard.html');
-  const existing = await chrome.tabs.query({ url });
+  const url = api.runtime.getURL('/dashboard.html');
+  const existing = await api.tabs.query({ url });
   if (existing[0]?.id) {
-    await chrome.tabs.update(existing[0].id, { active: true });
-    if (existing[0].windowId) await chrome.windows.update(existing[0].windowId, { focused: true });
+    await api.tabs.update(existing[0].id, { active: true });
+    if (existing[0].windowId) await api.windows.update(existing[0].windowId, { focused: true });
     return;
   }
-  await chrome.tabs.create({ url });
+  await api.tabs.create({ url });
 }
 
 /**
@@ -190,7 +185,7 @@ async function listCandidateTabs(): Promise<CandidateTab[]> {
   const run = await getRun();
   const claimed = new Set(run.seats.map((s) => s.tabId));
   const patterns = ADAPTERS.flatMap((a) => a.urlPatterns);
-  const tabs = await chrome.tabs.query({ url: patterns });
+  const tabs = await api.tabs.query({ url: patterns });
 
   return tabs
     .filter((t) => t.id !== undefined && t.url)

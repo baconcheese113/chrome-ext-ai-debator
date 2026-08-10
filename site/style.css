@@ -1,0 +1,98 @@
+/*
+ * Deliberately close to the extension's own console palette, so the landing page and the
+ * product read as one thing. Instrument panel, not marketing site.
+ */
+:root {
+  --chassis: #0d1116;
+  --panel: #141a21;
+  --panel-hi: #1b232c;
+  --rule: #263039;
+  --ink: #e6edf3;
+  --ink-dim: #9fb0be;
+  --ink-faint: #6b7d8c;
+  --accent: #4fc3d7;
+  --agree: #4ec98f;
+  --open: #d8a83c;
+  --r: 6px;
+  --font-label: 'Bahnschrift', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-data: 'Cascadia Mono', 'Consolas', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--chassis);
+  color: var(--ink);
+  font: 15px/1.65 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+.prose, .shell { max-width: 760px; margin: 0 auto; padding: 48px 22px 96px; }
+
+h1 {
+  font: 600 30px/1.2 var(--font-label);
+  letter-spacing: -0.01em;
+  margin: 0 0 6px;
+}
+h2 {
+  font: 600 13px var(--font-label);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 38px 0 10px;
+}
+h3 { font: 600 16px var(--font-label); margin: 26px 0 6px; }
+
+p, li { color: var(--ink-dim); }
+.lede { color: var(--ink); font-size: 17px; }
+.meta { color: var(--ink-faint); font-size: 13px; margin: 0 0 26px; font-family: var(--font-data); }
+.back { font-size: 13px; margin: 0 0 26px; }
+
+a { color: var(--accent); }
+a:hover { color: #6fdcea; }
+
+code {
+  font-family: var(--font-data);
+  font-size: 0.9em;
+  background: var(--panel-hi);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--ink);
+}
+
+ul { padding-left: 20px; }
+li { margin: 4px 0; }
+
+dl { margin: 12px 0; }
+dt { font-family: var(--font-data); color: var(--ink); margin-top: 14px; }
+dd { margin: 4px 0 0 0; padding-left: 16px; border-left: 2px solid var(--rule); color: var(--ink-dim); }
+
+.mark {
+  display: inline-block; width: 22px; height: 22px; vertical-align: -3px; margin-right: 10px;
+  background:
+    linear-gradient(var(--accent), var(--accent)) 0 3px / 5px 16px no-repeat,
+    linear-gradient(var(--agree), var(--agree)) 8px 0 / 5px 22px no-repeat,
+    linear-gradient(var(--open), var(--open)) 16px 7px / 5px 12px no-repeat;
+}
+
+.stores { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 0; padding: 0; list-style: none; }
+.stores a {
+  display: inline-block; text-decoration: none;
+  font: 600 12px var(--font-label); letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 10px 16px; border: 1px solid var(--rule); border-radius: var(--r);
+  background: var(--panel-hi); color: var(--ink);
+}
+.stores a:hover { border-color: var(--accent); color: var(--accent); }
+.stores a[aria-disabled='true'] { opacity: 0.45; pointer-events: none; }
+
+.note {
+  margin-top: 40px; padding: 12px 15px; font-size: 13px;
+  background: var(--panel); border: 1px solid var(--rule);
+  border-left: 2px solid var(--open); border-radius: var(--r);
+}
+
+footer {
+  margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule);
+  color: var(--ink-faint); font-size: 13px;
+}

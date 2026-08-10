@@ -1,0 +1,74 @@
+name: Release
+
+# Builds the three store packages from a tag, so what gets uploaded to Chrome, Edge and
+# Firefox is provably the same commit — not whatever happened to be in someone's .output.
+#
+#   npm version patch && git push --follow-tags
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # A broken build must not reach a store listing. The full suite is ~1 minute.
+      - name: Typecheck
+        run: npm run check
+
+      - name: Unit, orchestrator and build-integrity tests
+        run: npm test
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium chromium-headless-shell
+
+      - name: Driver and end-to-end tests
+        run: npm run test:e2e
+
+      - name: Fail if the tag and package.json disagree
+        # The manifest version comes from package.json. A tag that says otherwise produces a
+        # release whose artifacts are labelled with a different version than the tag.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag does not match package.json $pkg"
+            exit 1
+          fi
+
+      # Chrome and Edge take the same MV3 package. Firefox gets MV2 plus a sources zip, which
+      # AMO requires for any add-on whose shipped code is bundled.
+      - name: Package for Chrome and Edge
+        run: npx wxt zip
+
+      - name: Package for Firefox
+        run: npx wxt zip -b firefox
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: store-packages
+          path: .output/*.zip
+          retention-days: 30
+
+      - name: Attach packages to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .output/*.zip
+          generate_release_notes: true
