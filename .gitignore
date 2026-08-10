@@ -7,7 +7,7 @@ spike-results.json
 .playwright-mcp/
 *.png
 !public/icon/*.png
-!store-assets/*.png
+!store-assets/**/*.png
 test-results/
 playwright-report/
 tests/mock-provider/dist/
