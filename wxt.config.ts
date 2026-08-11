@@ -52,12 +52,18 @@ export default defineConfig({
         // A stable add-on ID is required for MV3 on Firefox and strongly recommended on MV2.
         // Once published this can never change without becoming a different add-on.
         id: 'ai-debator@baconcheese113.github.io',
-        strict_min_version: '128.0',
+        // 140, not 128, because `data_collection_permissions` below only exists from Firefox
+        // 140. Claiming 128 makes AMO warn that the key would be silently ignored on
+        // 128–139 — declaring a minimum older than the features you declare is a promise the
+        // build cannot keep.
+        strict_min_version: '140.0',
         // Required for new AMO submissions since 3 November 2025. The panel keeps everything
         // in local extension storage and contacts no server of ours, so there is nothing to
         // declare — but the declaration itself is mandatory.
         data_collection_permissions: { required: ['none'] },
       },
+      // Android shipped the same key two releases later than desktop.
+      gecko_android: { strict_min_version: '142.0' },
     },
   },
 });

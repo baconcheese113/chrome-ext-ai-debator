@@ -16,26 +16,48 @@ stuck, with one click through to each model's own tab for the full reply.
 
 ## Install
 
-Store listings are pending review. Until they are live, grab a build from
-[Releases](https://github.com/baconcheese113/chrome-ext-ai-debator/releases) or build it
-yourself.
+Store listings are in review. Until they are live, install from
+[Releases](https://github.com/baconcheese113/chrome-ext-ai-debator/releases).
 
-| Browser | Package |
-| --- | --- |
-| Chrome, Edge, Brave, Opera | `ai-debator-<version>-chrome.zip` |
-| Firefox | `ai-debator-<version>-firefox.zip` |
+### Chrome, Edge, Brave, Opera
+
+1. Download `ai-debator-<version>-chrome.zip` and **unzip it** — a zip will not load.
+2. Go to `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and choose the unzipped folder.
+
+Two things to know before you do. Chrome shows a *"Disable developer mode extensions"* bubble
+every time it starts; it is dismissible and harmless, but it is permanent until the store
+listing goes live. And an unpacked extension **does not auto-update** — a new version means
+repeating these steps. Installing a `.crx` from outside the Web Store is not an option;
+Chrome has blocked that since Chrome 33.
+
+A sideloaded build also gets a different extension ID than the eventual store build, so the
+two are separate installs and no run history carries across.
+
+### Firefox
+
+Download `ai-debator-<version>-firefox.xpi` and open it in Firefox. It installs like any other
+add-on and updates itself.
+
+Release Firefox will not install an unsigned add-on, so `.zip` builds from source are
+temporary-only: `about:debugging` → This Firefox → **Load Temporary Add-on** →
+`.output/firefox-mv2/manifest.json`, which lasts until you restart.
 
 ## Build it yourself
 
+Requires Node 22+.
+
 ```bash
-npm install
+npm ci
 npm run build              # Chrome / Edge  → .output/chrome-mv3
 npx wxt build -b firefox   # Firefox        → .output/firefox-mv2
+
+npx wxt zip                # packaged, → .output/ai-debator-<version>-chrome.zip
+npx wxt zip -b firefox     # packaged + sources zip for AMO
 ```
 
-`chrome://extensions` → Developer mode → **Load unpacked** → `.output/chrome-mv3`.
-On Firefox: `about:debugging` → This Firefox → **Load Temporary Add-on** →
-`.output/firefox-mv2/manifest.json`.
+Then load the unpacked directory as above. Full reproduction notes for add-on reviewers are
+in [`docs/amo-reviewer-notes.md`](docs/amo-reviewer-notes.md).
 
 Then:
 
